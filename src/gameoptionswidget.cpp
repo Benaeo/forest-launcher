@@ -1,6 +1,7 @@
 #include "gameoptionswidget.h"
 #include "protonmanager.h"
 #include "backendclient.h"
+#include "elidingcombobox.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -54,7 +55,7 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     const auto dataRoot = frontend.value("data_root").toString();
     m_runnerRoot = dataRoot.isEmpty() ? QDir::homePath() + "/.local/share/Steam/compatibilitytools.d"
                                     : dataRoot + "/compatibilitytools.d";
-    m_proton = new QComboBox(this);
+    m_proton = new ElidingComboBox(this);
     m_proton->setObjectName("gameProton");
     const QStringList latestNames{"Proton-CachyOS Latest", "Proton-GE Latest"};
     for (const auto &name : latestNames) {
@@ -132,6 +133,7 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     protonRow->addWidget(m_proton, 1);
     m_downloadLatest = new QPushButton("Download Latest", this);
     m_downloadLatest->setObjectName("downloadLatestProtonButton");
+    m_downloadLatest->setFixedWidth(m_downloadLatest->sizeHint().width());
     protonRow->addWidget(m_downloadLatest);
     form->addRow(defaultsEditor ? "Default Proton" : "Proton build", protonRow);
     m_latestProgressRow = new QWidget(this);
@@ -313,6 +315,7 @@ void GameOptionsWidget::finishLatestDownload() {
 
 void GameOptionsWidget::updateLatestButton() {
     const auto name = m_proton->currentText();
+    m_proton->setToolTip(name + "\n" + protonSelection());
     const bool latest = m_proton->currentIndex() >= 0 && m_proton->currentIndex() < 2;
     const auto path = m_runnerRoot + "/" + name;
     const bool installed = latest && QFileInfo::exists(path + "/proton");
