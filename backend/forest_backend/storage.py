@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 import json
+from pathlib import Path
 import re
 import shlex
 import sqlite3
@@ -47,38 +48,54 @@ def parse_environment(value) -> dict[str, str]:
     return dict(value)
 
 
-def validate_game(value: dict) -> dict:
+def default_game_options() -> dict:
+    return {"kind": "windows", "prefix": "", "proton": "default",
+            "arguments": "", "environment": {}, "tags": []}
+
+
+def validate_game_options(value: dict) -> dict:
     if not isinstance(value, dict):
-        raise BackendError("Game must be an object.")
-    game = {
-        "title": text(value.get("title", ""), "Title", required=True, limit=256),
+        raise BackendError("Game options must be an object.")
+    options = {
         "kind": text(value.get("kind", "windows"), "Game type"),
-        "path": text(value.get("path", ""), "Executable or Steam App ID", required=True),
-        "prefix": text(value.get("prefix", ""), "Prefix"),
+        "prefix": expand_path(text(value.get("prefix", ""), "Prefix")),
         "proton": text(value.get("proton", "default"), "Proton build"),
         "arguments": text(value.get("arguments", ""), "Arguments", limit=32768),
         "environment": parse_environment(value.get("environment", {})),
     }
-    if game["kind"] not in GAME_KINDS:
+    if options["kind"] not in GAME_KINDS:
         raise BackendError("Unsupported game type.")
-    if game["kind"] == "steam":
-        if not re.fullmatch(r"[0-9]{1,10}", game["path"]) or not 0 < int(game["path"]) <= 0xFFFFFFFF:
-            raise BackendError("Steam App ID must be a positive number.")
-        game["prefix"] = ""
-        game["proton"] = "default"
-    else:
-        game["path"] = expand_path(game["path"])
-        game["prefix"] = expand_path(game["prefix"])
     try:
-        shlex.split(game["arguments"])
+        shlex.split(options["arguments"])
     except ValueError as exc:
         raise BackendError(f"Invalid game arguments: {exc}") from None
     tags = value.get("tags", [])
     if not isinstance(tags, list) or len(tags) > 30:
         raise BackendError("Tags must be a list of up to 30 labels.")
-    game["tags"] = sorted({text(tag, "Tag", required=True, limit=64).casefold() for tag in tags})
-    if "online-fix" in game["tags"] and game["kind"] != "windows":
+    options["tags"] = sorted({text(tag, "Tag", required=True, limit=64).casefold() for tag in tags})
+    if "online-fix" in options["tags"] and options["kind"] != "windows":
         raise BackendError("The online-fix tag is only supported for Windows games.")
+    if options["kind"] != "windows":
+        options["prefix"] = ""
+        options["proton"] = "default"
+    if options["kind"] == "steam":
+        options["environment"] = {}
+    return options
+
+
+def validate_game(value: dict) -> dict:
+    if not isinstance(value, dict):
+        raise BackendError("Game must be an object.")
+    game = {
+        **validate_game_options(value),
+        "title": text(value.get("title", ""), "Title", required=True, limit=256),
+        "path": text(value.get("path", ""), "Executable or Steam App ID", required=True),
+    }
+    if game["kind"] == "steam":
+        if not re.fullmatch(r"[0-9]{1,10}", game["path"]) or not 0 < int(game["path"]) <= 0xFFFFFFFF:
+            raise BackendError("Steam App ID must be a positive number.")
+    else:
+        game["path"] = expand_path(game["path"])
     return game
 
 
@@ -129,15 +146,30 @@ class Store:
         return self.decode(row)
 
     def save_game(self, value: dict) -> dict:
-        game = validate_game(value)
+        if not isinstance(value, dict):
+            raise BackendError("Game must be an object.")
         game_id = text(value.get("id", ""), "Game ID", limit=128)
+        creating = not game_id
+        if creating:
+            settings = self.get_settings()
+            combined = {**settings["new_game_defaults"], **value}
+            if combined["kind"] != "windows" and "tags" not in value:
+                combined["tags"] = [tag for tag in combined["tags"] if tag != "online-fix"]
+            game = validate_game(combined)
+            game_id = str(uuid4())
+            if game["kind"] == "windows":
+                if not game["prefix"]:
+                    game["prefix"] = str(Path(settings["prefix_root"]) / game_id)
+                if game["proton"] in ("", "default"):
+                    game["proton"] = settings["default_proton"]
+        else:
+            game = validate_game(value)
         document = json.dumps(game, ensure_ascii=False)
         with self.connection:
-            if game_id:
+            if not creating:
                 self.get_game(game_id)
                 self.connection.execute("UPDATE games SET document = ? WHERE id = ?", (document, game_id))
             else:
-                game_id = str(uuid4())
                 self.connection.execute(
                     "INSERT INTO games (id, document, created_at) VALUES (?, ?, ?)",
                     (game_id, document, now()),
@@ -159,9 +191,12 @@ class Store:
             "default_proton": "auto",
             "umu_program": "",
             "close_after_launch": False,
+            "new_game_defaults": default_game_options(),
         }
         for key, value in self.connection.execute("SELECT key, value FROM settings"):
-            if key in defaults:
+            if key == "new_game_defaults":
+                defaults[key].update(json.loads(value))
+            elif key in defaults:
                 defaults[key] = json.loads(value)
         return defaults
 
@@ -177,6 +212,17 @@ class Store:
         for key in ("prefix_root", "default_proton", "umu_program"):
             if key in values:
                 values[key] = text(values[key], key, required=key != "umu_program")
+        if "new_game_defaults" in values:
+            options = values["new_game_defaults"]
+            if not isinstance(options, dict) or set(options) - set(default_game_options()):
+                raise BackendError("New game defaults must contain only supported game options.")
+            options = validate_game_options({**settings["new_game_defaults"], **options})
+            if options["proton"] not in ("", "default"):
+                if "default_proton" in values and values["default_proton"] != options["proton"]:
+                    raise BackendError("Default Proton selections must agree.")
+                values["default_proton"] = options["proton"]
+            options["proton"] = "default"
+            values["new_game_defaults"] = options
         settings.update(values)
         settings["prefix_root"] = expand_path(settings["prefix_root"])
         with self.connection:

@@ -11,6 +11,8 @@ add_executable(forest-launcher
     src/main.cpp
     src/backendclient.cpp
     src/gamedialog.cpp
+    src/gameoptionswidget.cpp
+    src/settingsdialog.cpp
     src/mainwindow.cpp
 )
 target_link_libraries(forest-launcher PRIVATE Qt6::Widgets)

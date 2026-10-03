@@ -3,11 +3,9 @@
 #include <QDialog>
 #include <QJsonObject>
 
-class QCheckBox;
-class QComboBox;
+class GameOptionsWidget;
 class QLabel;
 class QLineEdit;
-class QPlainTextEdit;
 class QPushButton;
 
 class GameDialog : public QDialog {
@@ -20,18 +18,9 @@ private:
     void validateAndAccept();
     QJsonObject m_original;
     QLineEdit *m_title;
-    QComboBox *m_kind;
     QLabel *m_pathLabel;
     QLineEdit *m_path;
     QPushButton *m_browse;
-    QLabel *m_prefixLabel;
-    QLineEdit *m_prefix;
-    QPushButton *m_prefixBrowse;
-    QLabel *m_protonLabel;
-    QComboBox *m_proton;
-    QLineEdit *m_arguments;
-    QLineEdit *m_tags;
-    QCheckBox *m_onlineFix;
-    QPlainTextEdit *m_environment;
+    GameOptionsWidget *m_options;
     QLabel *m_error;
 };

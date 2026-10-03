@@ -30,7 +30,7 @@ private:
     void removeSelected();
     void launchSelected();
     void previewSelected();
-    void showSettings();
+    void showSettings(const QJsonObject &pendingSettings = {});
     void showError(const QString &message);
     void setBusy(bool busy);
     void runSmokeTest();

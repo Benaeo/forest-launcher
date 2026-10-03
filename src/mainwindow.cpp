@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "backendclient.h"
 #include "gamedialog.h"
+#include "settingsdialog.h"
 
 #include <QAction>
 #include <QApplication>
@@ -196,7 +197,7 @@ MainWindow::MainWindow(QString backendDirectory, QString dataRoot, bool smokeTes
     connect(m_removeAction, &QAction::triggered, this, &MainWindow::removeSelected);
     connect(m_playAction, &QAction::triggered, this, &MainWindow::launchSelected);
     connect(m_previewAction, &QAction::triggered, this, &MainWindow::previewSelected);
-    connect(m_settingsAction, &QAction::triggered, this, &MainWindow::showSettings);
+    connect(m_settingsAction, &QAction::triggered, this, [this] { showSettings(); });
     connect(m_play, &QPushButton::clicked, this, &MainWindow::launchSelected);
     connect(m_edit, &QPushButton::clicked, this, [this] { editGame(selectedGame()); });
     connect(m_log, &QPushButton::clicked, this, [this] {
@@ -361,58 +362,19 @@ void MainWindow::previewSelected() {
     }, [this](const QString &error) { setBusy(false); showError(error); });
 }
 
-void MainWindow::showSettings() {
-    QDialog dialog(this);
-    dialog.setWindowTitle("Settings");
-    dialog.setMinimumWidth(600);
-    auto *layout = new QVBoxLayout(&dialog);
-    auto *form = new QFormLayout;
-    const auto settings = m_bootstrap.value("settings").toObject();
-    auto *prefix = new QLineEdit(settings.value("prefix_root").toString(), &dialog);
-    auto *prefixBrowse = new QPushButton("Browse…", &dialog);
-    auto *prefixRow = new QHBoxLayout;
-    prefixRow->addWidget(prefix, 1);
-    prefixRow->addWidget(prefixBrowse);
-    form->addRow("Default prefix folder", prefixRow);
-    auto *proton = new QComboBox(&dialog);
-    proton->addItem("Automatic (prefer installed GE-Proton)", "auto");
-    for (const auto &value : m_bootstrap.value("protons").toArray()) {
-        const auto build = value.toObject();
-        proton->addItem(build.value("label").toString(), build.value("id").toString());
-    }
-    const auto selected = settings.value("default_proton").toString();
-    if (proton->findData(selected) < 0) proton->addItem(selected, selected);
-    proton->setCurrentIndex(proton->findData(selected));
-    form->addRow("Default Proton", proton);
-    auto *umu = new QLineEdit(settings.value("umu_program").toString(), &dialog);
-    umu->setPlaceholderText("Automatic: find installed umu-run");
-    auto *umuBrowse = new QPushButton("Browse…", &dialog);
-    auto *umuRow = new QHBoxLayout;
-    umuRow->addWidget(umu, 1);
-    umuRow->addWidget(umuBrowse);
-    form->addRow("UMU executable", umuRow);
-    auto *closeAfter = new QCheckBox("Close Forest after launching a game", &dialog);
-    closeAfter->setChecked(settings.value("close_after_launch").toBool());
-    form->addRow(QString(), closeAfter);
-    layout->addLayout(form);
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dialog);
-    layout->addWidget(buttons);
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    connect(prefixBrowse, &QPushButton::clicked, &dialog, [&dialog, prefix] {
-        const auto path = QFileDialog::getExistingDirectory(&dialog, "Choose prefix folder", prefix->text());
-        if (!path.isEmpty()) prefix->setText(path);
-    });
-    connect(umuBrowse, &QPushButton::clicked, &dialog, [&dialog, umu] {
-        const auto path = QFileDialog::getOpenFileName(&dialog, "Choose umu-run executable", umu->text());
-        if (!path.isEmpty()) umu->setText(path);
-    });
+void MainWindow::showSettings(const QJsonObject &pendingSettings) {
+    auto bootstrap = m_bootstrap;
+    if (!pendingSettings.isEmpty()) bootstrap.insert("settings", pendingSettings);
+    SettingsDialog dialog(bootstrap, this);
     if (dialog.exec() != QDialog::Accepted) return;
-    const QJsonObject values{{"prefix_root", prefix->text()}, {"default_proton", proton->currentData().toString()},
-        {"umu_program", umu->text()}, {"close_after_launch", closeAfter->isChecked()}};
+    const auto values = dialog.settingsData();
     setBusy(true);
     m_backend->request("save_settings", {{"settings", values}}, [this](const QJsonObject &) { refresh(); },
-        [this](const QString &error) { setBusy(false); showError(error); });
+        [this, values](const QString &error) {
+            setBusy(false);
+            showError(error);
+            showSettings(values);
+        });
 }
 
 void MainWindow::showError(const QString &message) {
@@ -458,12 +420,19 @@ void MainWindow::runSmokeTest() {
         file.close();
         file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
     }
-    GameDialog dialog({}, m_bootstrap, this);
-    dialog.setExecutablePath(exe);
-    if (!dialog.findChild<QCheckBox *>("onlineFixCheck")) { failure("Online-fix control missing."); return; }
-    const auto game = dialog.gameData();
-    m_backend->request("save_settings", {{"settings", QJsonObject{{"umu_program", umu}}}},
-        [this, game, failure](const QJsonObject &) {
+    const QJsonObject defaults{{"arguments", "--forest-smoke"}, {"tags", QJsonArray{"smoke-test"}},
+        {"environment", QJsonObject{{"FOREST_SMOKE", "1"}}}, {"prefix", m_dataRoot + "/shared-prefix"}};
+    m_backend->request("save_settings", {{"settings", QJsonObject{{"umu_program", umu}, {"new_game_defaults", defaults}}}},
+        [this, exe, failure](const QJsonObject &data) {
+        m_bootstrap.insert("settings", data.value("settings"));
+        GameDialog dialog({}, m_bootstrap, this);
+        dialog.setExecutablePath(exe);
+        if (!dialog.findChild<QCheckBox *>("onlineFixCheck")) { failure("Online-fix control missing."); return; }
+        const auto game = dialog.gameData();
+        if (game.value("arguments").toString() != "--forest-smoke"
+            || !game.value("tags").toArray().contains("smoke-test")) {
+            failure("Saved defaults did not prefill Add game."); return;
+        }
         m_backend->request("save_game", {{"game", game}}, [this, failure](const QJsonObject &data) {
             const auto game = data.value("game").toObject();
             m_bootstrap.insert("games", QJsonArray{game});
@@ -471,7 +440,12 @@ void MainWindow::runSmokeTest() {
             if (selectedGame().value("id") != game.value("id")) { failure("Library selection failed."); return; }
             m_backend->request("preview_launch", {{"id", game.value("id")}},
                 [this, game, failure](const QJsonObject &plan) {
-                if (plan.value("mode").toString() != "umu") { failure("Wrong launch mode."); return; }
+                if (plan.value("mode").toString() != "umu"
+                    || !plan.value("command").toArray().contains("--forest-smoke")
+                    || plan.value("environment").toObject().value("FOREST_SMOKE").toString() != "1"
+                    || plan.value("prefix").toString() != m_dataRoot + "/shared-prefix") {
+                    failure("Defaults did not reach the launch plan."); return;
+                }
                 m_backend->request("delete_game", {{"id", game.value("id")}},
                     [this, failure](const QJsonObject &) {
                     m_backend->request("list_games", {}, [failure](const QJsonObject &data) {
