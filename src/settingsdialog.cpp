@@ -1,5 +1,6 @@
 #include "settingsdialog.h"
 #include "gameoptionswidget.h"
+#include "dialogbuttons.h"
 
 #include <QCheckBox>
 #include <QDialogButtonBox>
@@ -27,7 +28,7 @@ SettingsDialog::SettingsDialog(const QJsonObject &bootstrap, QWidget *parent)
     auto *hint = new QLabel("Game options prefill newly added games; existing profiles are unchanged. Auto-close applies to all games.", this);
     hint->setWordWrap(true);
     layout->addWidget(hint);
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, this);
+    auto *buttons = new WideDialogButtons(this);
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);

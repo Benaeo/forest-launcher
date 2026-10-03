@@ -1,5 +1,6 @@
 #include "gamedialog.h"
 #include "gameoptionswidget.h"
+#include "dialogbuttons.h"
 
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -48,7 +49,7 @@ GameDialog::GameDialog(const QJsonObject &game, const QJsonObject &bootstrap, QW
     m_error->setWordWrap(true);
     m_error->setVisible(false);
     layout->addWidget(m_error);
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, this);
+    auto *buttons = new WideDialogButtons(this);
     connect(buttons, &QDialogButtonBox::accepted, this, &GameDialog::validateAndAccept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(buttons);
