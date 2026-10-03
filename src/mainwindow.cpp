@@ -65,6 +65,7 @@ MainWindow::MainWindow(QString backendDirectory, QString dataRoot, bool smokeTes
     setWindowTitle("Forest Launcher");
     resize(970, 620);
     setAcceptDrops(true);
+    m_shortcutContext = {{"launcher", QCoreApplication::applicationFilePath()}, {"backend", backendDirectory}};
     m_backend = new BackendClient(std::move(backendDirectory), m_dataRoot, this);
     const auto icon = [this](const QString &name, QStyle::StandardPixmap fallback) {
         return QIcon::fromTheme(name, style()->standardIcon(fallback));
@@ -299,8 +300,9 @@ void MainWindow::editGame(const QJsonObject &game) {
     if (dialog.exec() != QDialog::Accepted) return;
     const auto updated = dialog.gameData();
     setBusy(true);
-    m_backend->request("save_game", {{"game", updated}}, [this](const QJsonObject &data) {
+    m_backend->request("save_game", {{"game", updated}, {"shortcut_context", m_shortcutContext}}, [this](const QJsonObject &data) {
         refresh(data.value("game").toObject().value("id").toString());
+        if (!data.value("warning").toString().isEmpty()) showError(data.value("warning").toString());
     }, [this, updated](const QString &error) {
         setBusy(false);
         showError(error);
@@ -318,8 +320,9 @@ void MainWindow::addExecutable(const QString &path) {
     if (dialog.exec() != QDialog::Accepted) return;
     const auto game = dialog.gameData();
     setBusy(true);
-    m_backend->request("save_game", {{"game", game}}, [this](const QJsonObject &data) {
+    m_backend->request("save_game", {{"game", game}, {"shortcut_context", m_shortcutContext}}, [this](const QJsonObject &data) {
         refresh(data.value("game").toObject().value("id").toString());
+        if (!data.value("warning").toString().isEmpty()) showError(data.value("warning").toString());
     }, [this, game](const QString &error) { setBusy(false); showError(error); editGame(game); });
 }
 
@@ -327,7 +330,7 @@ void MainWindow::removeSelected() {
     const auto game = selectedGame();
     if (m_busy || game.isEmpty()) return;
     QMessageBox prompt(QMessageBox::Question, "Remove game",
-        "Remove “" + game.value("title").toString() + "” from the library?\n\nGame files and prefixes will not be deleted.",
+        "Remove “" + game.value("title").toString() + "” from the library?\n\nForest-created shortcuts will also be removed. Game files and prefixes will not be deleted.",
         QMessageBox::Yes | QMessageBox::No, this);
     prompt.setTextFormat(Qt::PlainText);
     prompt.setDefaultButton(QMessageBox::No);
@@ -476,7 +479,8 @@ void MainWindow::runSmokeTest() {
     qputenv("PATH", (m_dataRoot + "/bin:").toUtf8() + qgetenv("PATH"));
     const QJsonObject defaults{{"arguments", "--forest-smoke"}, {"tags", QJsonArray{"smoke-test"}},
         {"environment", QJsonObject{{"FOREST_SMOKE", "1"}}}, {"prefix", m_dataRoot + "/shared-prefix"},
-        {"mangohud", true}, {"prefer_sdl", true}, {"no_sleep", true}};
+        {"mangohud", true}, {"prefer_sdl", true}, {"no_sleep", true},
+        {"desktop_shortcut", true}, {"app_menu_shortcut", true}};
     m_backend->request("save_settings", {{"settings", QJsonObject{{"default_proton", "Proton-CachyOS Latest"}, {"new_game_defaults", defaults}}}},
         [this, exe, failure](const QJsonObject &data) {
         m_bootstrap.insert("settings", data.value("settings"));
@@ -488,7 +492,10 @@ void MainWindow::runSmokeTest() {
             || !game.value("tags").toArray().contains("smoke-test")) {
             failure("Saved defaults did not prefill Add game."); return;
         }
-        m_backend->request("save_game", {{"game", game}}, [this, failure](const QJsonObject &data) {
+        m_backend->request("save_game", {{"game", game}, {"shortcut_context", m_shortcutContext}}, [this, failure](const QJsonObject &data) {
+            if (!data.value("warning").toString().isEmpty() || data.value("shortcuts").toArray().size() != 2) {
+                failure("Shortcut creation failed."); return;
+            }
             const auto game = data.value("game").toObject();
             m_bootstrap.insert("games", QJsonArray{game});
             populateLibrary(game.value("id").toString());
@@ -505,7 +512,11 @@ void MainWindow::runSmokeTest() {
                     failure("Defaults did not reach the launch plan."); return;
                 }
                 m_backend->request("delete_game", {{"id", game.value("id")}},
-                    [this, failure](const QJsonObject &) {
+                    [this, failure, game](const QJsonObject &) {
+                    const auto filename = "/io.github.Benaeo.forest-launcher.game-" + game.value("id").toString() + ".desktop";
+                    if (QFileInfo::exists(m_dataRoot + "/desktop" + filename) || QFileInfo::exists(m_dataRoot + "/applications" + filename)) {
+                        failure("Shortcut cleanup failed."); return;
+                    }
                     m_backend->request("list_games", {}, [failure](const QJsonObject &data) {
                         if (!data.value("games").toArray().isEmpty()) { failure("Delete failed."); return; }
                         qInfo("Forest GUI/backend smoke test passed (no game executed).");

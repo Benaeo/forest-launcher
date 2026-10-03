@@ -27,12 +27,13 @@ class Paths:
     data: Path
     config: Path
     state: Path
+    root: Path | None = None
 
     @classmethod
     def create(cls, root: str | None = None):
         if root:
             base = Path(root).expanduser().resolve()
-            return cls(base / "data", base / "config", base / "state")
+            return cls(base / "data", base / "config", base / "state", base)
         home = Path.home()
         return cls(
             xdg_home("XDG_DATA_HOME", home / ".local/share") / "forest-launcher",

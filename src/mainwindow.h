@@ -44,6 +44,7 @@ private:
     bool m_umuUpdating = false;
     bool m_busy = true;
     QJsonObject m_bootstrap;
+    QJsonObject m_shortcutContext;
     QStandardItemModel *m_model;
     QSortFilterProxyModel *m_proxy;
     QListView *m_library;

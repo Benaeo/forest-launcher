@@ -4,6 +4,7 @@ from .common import BackendError, Paths
 from .launch import build_plan, launch_game
 from .steam import discover_protons, native_steam_root
 from .storage import Store
+from .shortcuts import Shortcuts
 from .umu import UMUManager
 
 
@@ -48,9 +49,20 @@ class Service:
         if action == "list_games":
             return {"games": self.store.list_games()}
         if action == "save_game":
-            return {"game": self.store.save_game(params.get("game"))}
+            game = self.store.save_game(params.get("game"))
+            try:
+                files = Shortcuts(self.paths, game["id"]).sync(game, params.get("shortcut_context"))
+                return {"game": game, "shortcuts": files}
+            except (BackendError, OSError) as error:
+                return {"game": game, "warning": f"Game saved, but shortcuts could not be updated: {error}"}
         if action == "delete_game":
-            self.store.delete_game(params.get("id", ""))
+            game_id = params.get("id", "")
+            self.store.get_game(game_id)
+            try:
+                Shortcuts(self.paths, game_id).remove()
+            except (BackendError, OSError) as error:
+                raise BackendError(f"Could not remove shortcuts; the library entry was kept: {error}", "shortcut_error")
+            self.store.delete_game(game_id)
             return {}
         if action == "save_settings":
             return {"settings": self.store.save_settings(params.get("settings"))}

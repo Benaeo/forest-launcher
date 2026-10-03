@@ -1,10 +1,14 @@
 #include "mainwindow.h"
+#include "backendclient.h"
 
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
 #include <QFileInfo>
 #include <QIcon>
+#include <QJsonDocument>
+#include <QMessageBox>
+#include <QTextStream>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <memory>
@@ -27,6 +31,8 @@ int main(int argc, char **argv) {
     parser.addVersionOption();
     parser.addOption({"backend-dir", "Backend module directory.", "directory"});
     parser.addOption({"data-root", "Isolate all mutable data under a directory.", "directory"});
+    parser.addOption({"launch", "Launch a saved game without opening the library.", "game-id"});
+    parser.addOption({"preview-launch", "Print a saved game launch plan without executing it.", "game-id"});
     parser.addOption({"smoke-test", "Exercise the GUI/backend protocol without launching games."});
     parser.addPositionalArgument("executable", "Open the add-game dialog for this executable.", "[executable]");
     parser.process(app);
@@ -49,6 +55,32 @@ int main(int argc, char **argv) {
     if (!QFileInfo::exists(backend + "/forest_backend/__main__.py")) {
         qCritical("Forest backend files were not found. Reinstall Forest or specify --backend-dir.");
         return 1;
+    }
+    if (parser.isSet("launch") || parser.isSet("preview-launch")) {
+        if (smoke || !parser.positionalArguments().isEmpty() || (parser.isSet("launch") && parser.isSet("preview-launch"))) {
+            QTextStream(stderr) << "Choose one launch action without an executable or smoke-test.\n";
+            return 1;
+        }
+        app.setQuitOnLastWindowClosed(false);
+        BackendClient client(backend, dataRoot);
+        const bool preview = parser.isSet("preview-launch");
+        const auto id = parser.value(preview ? "preview-launch" : "launch");
+        QTimer::singleShot(0, &client, [&client, &app, preview, id] {
+            client.request(preview ? "preview_launch" : "launch_game", {{"id", id}},
+                [&app, preview](const QJsonObject &data) {
+                    if (preview) QTextStream(stdout) << QJsonDocument(data).toJson(QJsonDocument::Indented);
+                    app.exit(0);
+                }, [&app, preview](const QString &error) {
+                    QTextStream(stderr) << error << '\n';
+                    if (!preview) {
+                        QMessageBox message(QMessageBox::Critical, "Forest launch failed", error, QMessageBox::Close);
+                        message.setTextFormat(Qt::PlainText);
+                        message.exec();
+                    }
+                    app.exit(1);
+                });
+        });
+        return app.exec();
     }
     MainWindow window(backend, dataRoot, smoke);
     window.show();

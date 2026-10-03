@@ -97,6 +97,18 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     m_noSleep->setObjectName("noSleepCheck");
     m_noSleep->setChecked(options.value("no_sleep").toBool());
     m_noSleep->setToolTip("Prevent system sleep while the game command runs using systemd-inhibit. Does not change screen-lock settings. Steam library launches cannot be tracked this way.");
+    m_desktopShortcut = new QCheckBox("Desktop", this);
+    m_desktopShortcut->setObjectName("desktopShortcutCheck");
+    m_desktopShortcut->setChecked(options.value("desktop_shortcut").toBool());
+    m_desktopShortcut->setToolTip("Create a Forest shortcut in your Desktop folder when this game is saved.");
+    m_appMenuShortcut = new QCheckBox("App Menu", this);
+    m_appMenuShortcut->setObjectName("appMenuShortcutCheck");
+    m_appMenuShortcut->setChecked(options.value("app_menu_shortcut").toBool());
+    m_appMenuShortcut->setToolTip("Create a Forest shortcut in your application menu when this game is saved.");
+    auto *steamShortcut = new QCheckBox("Steam (later)", this);
+    steamShortcut->setObjectName("steamShortcutCheck");
+    steamShortcut->setEnabled(false);
+    steamShortcut->setToolTip("Steam shortcut integration is deferred until icon and banner support is added.");
     QGroupBox *generalOptions = nullptr;
     QHBoxLayout *tools = nullptr;
     if (defaultsEditor) {
@@ -106,6 +118,10 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
         m_generalOptions->addWidget(m_preferSdl);
         m_generalOptions->addWidget(m_noSleep);
         m_generalOptions->addWidget(m_onlineFix);
+        m_generalOptions->addWidget(new QLabel("New game shortcuts", this));
+        m_generalOptions->addWidget(m_desktopShortcut);
+        m_generalOptions->addWidget(m_appMenuShortcut);
+        m_generalOptions->addWidget(steamShortcut);
         m_generalOptions->addStretch();
     } else {
         tools = new QHBoxLayout;
@@ -123,6 +139,12 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     if (!defaultsEditor) {
         form->addRow(QString(), m_onlineFix);
         form->addRow("Tools", tools);
+        auto *shortcuts = new QHBoxLayout;
+        shortcuts->addWidget(m_desktopShortcut);
+        shortcuts->addWidget(m_appMenuShortcut);
+        shortcuts->addWidget(steamShortcut);
+        shortcuts->addStretch();
+        form->addRow("Shortcuts", shortcuts);
         tabs->addTab(launch, "Launch");
     }
     QWidget *advanced = defaultsEditor ? static_cast<QWidget *>(new QGroupBox("Environment variables", this)) : new QWidget(tabs);
@@ -205,6 +227,8 @@ QJsonObject GameOptionsWidget::optionsData() const {
         {"mangohud", m_mangohud->isEnabled() && m_mangohud->isChecked()},
         {"prefer_sdl", m_preferSdl->isEnabled() && m_preferSdl->isChecked()},
         {"no_sleep", m_noSleep->isEnabled() && m_noSleep->isChecked()},
+        {"desktop_shortcut", m_desktopShortcut->isChecked()},
+        {"app_menu_shortcut", m_appMenuShortcut->isChecked()},
         {"environment", m_environment->isEnabled() ? m_environment->toPlainText() : QString()},
     };
 }

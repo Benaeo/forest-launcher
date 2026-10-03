@@ -33,6 +33,8 @@ private:
     QCheckBox *m_mangohud;
     QCheckBox *m_preferSdl;
     QCheckBox *m_noSleep;
+    QCheckBox *m_desktopShortcut;
+    QCheckBox *m_appMenuShortcut;
     QPlainTextEdit *m_environment;
     QVBoxLayout *m_generalOptions = nullptr;
 };
