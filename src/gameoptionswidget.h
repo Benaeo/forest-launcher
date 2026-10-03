@@ -8,6 +8,7 @@ class QComboBox;
 class QLineEdit;
 class QPlainTextEdit;
 class QPushButton;
+class QVBoxLayout;
 
 class GameOptionsWidget : public QWidget {
 public:
@@ -18,6 +19,7 @@ public:
     QString kind() const;
     QString protonSelection() const;
     void setKind(const QString &kind);
+    void addGeneralOption(QWidget *option);
 private:
     void updateKind();
     QComboBox *m_kind;
@@ -32,4 +34,5 @@ private:
     QCheckBox *m_preferSdl;
     QCheckBox *m_noSleep;
     QPlainTextEdit *m_environment;
+    QVBoxLayout *m_generalOptions = nullptr;
 };

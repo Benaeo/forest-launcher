@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFormLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QLabel>
@@ -19,8 +20,8 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     : QWidget(parent) {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    auto *tabs = new QTabWidget(this);
-    auto *launch = new QWidget(tabs);
+    auto *tabs = defaultsEditor ? nullptr : new QTabWidget(this);
+    QWidget *launch = defaultsEditor ? static_cast<QWidget *>(new QGroupBox("New game defaults", this)) : new QWidget(tabs);
     auto *form = new QFormLayout(launch);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     m_kind = new QComboBox(this);
@@ -96,21 +97,35 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     m_noSleep->setObjectName("noSleepCheck");
     m_noSleep->setChecked(options.value("no_sleep").toBool());
     m_noSleep->setToolTip("Prevent system sleep while the game command runs using systemd-inhibit. Does not change screen-lock settings. Steam library launches cannot be tracked this way.");
-    auto *tools = new QHBoxLayout;
-    tools->addWidget(m_mangohud);
-    tools->addWidget(m_preferSdl);
-    tools->addWidget(m_noSleep);
-    tools->addStretch();
+    QGroupBox *generalOptions = nullptr;
+    QHBoxLayout *tools = nullptr;
+    if (defaultsEditor) {
+        generalOptions = new QGroupBox("Options", this);
+        m_generalOptions = new QVBoxLayout(generalOptions);
+        m_generalOptions->addWidget(m_mangohud);
+        m_generalOptions->addWidget(m_preferSdl);
+        m_generalOptions->addWidget(m_noSleep);
+        m_generalOptions->addWidget(m_onlineFix);
+        m_generalOptions->addStretch();
+    } else {
+        tools = new QHBoxLayout;
+        tools->addWidget(m_mangohud);
+        tools->addWidget(m_preferSdl);
+        tools->addWidget(m_noSleep);
+        tools->addStretch();
+    }
     form->addRow("Game type", m_kind);
     form->addRow("Wine prefix", prefixRow);
     form->addRow(defaultsEditor ? "Default Proton" : "Proton build", m_proton);
     form->addRow(QString(), legacyProton);
     form->addRow("Arguments", m_arguments);
     form->addRow("Tags", m_tags);
-    form->addRow(QString(), m_onlineFix);
-    form->addRow("Tools", tools);
-    tabs->addTab(launch, "Launch");
-    auto *advanced = new QWidget(tabs);
+    if (!defaultsEditor) {
+        form->addRow(QString(), m_onlineFix);
+        form->addRow("Tools", tools);
+        tabs->addTab(launch, "Launch");
+    }
+    QWidget *advanced = defaultsEditor ? static_cast<QWidget *>(new QGroupBox("Environment variables", this)) : new QWidget(tabs);
     auto *advancedLayout = new QVBoxLayout(advanced);
     auto *hint = new QLabel("Optional environment variables, one KEY=value per line.\nUse the prefix and Proton fields for those settings.", advanced);
     hint->setWordWrap(true);
@@ -125,8 +140,16 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     m_environment->setPlainText(options.value("environment").isString()
         ? options.value("environment").toString() : environment.join("\n"));
     advancedLayout->addWidget(m_environment);
-    tabs->addTab(advanced, "Environment");
-    layout->addWidget(tabs);
+    if (defaultsEditor) {
+        auto *columns = new QHBoxLayout;
+        columns->addWidget(launch, 3);
+        columns->addWidget(generalOptions, 2);
+        columns->addWidget(advanced, 3);
+        layout->addLayout(columns);
+    } else {
+        tabs->addTab(advanced, "Environment");
+        layout->addWidget(tabs);
+    }
     connect(m_kind, &QComboBox::currentIndexChanged, this, [this] { updateKind(); });
     connect(m_prefixBrowse, &QPushButton::clicked, this, [this] {
         const auto path = QFileDialog::getExistingDirectory(this, "Choose Wine prefix", m_prefix->text());
@@ -143,6 +166,10 @@ QString GameOptionsWidget::protonSelection() const {
 void GameOptionsWidget::setKind(const QString &kind) {
     const auto index = m_kind->findData(kind);
     if (index >= 0) m_kind->setCurrentIndex(index);
+}
+
+void GameOptionsWidget::addGeneralOption(QWidget *option) {
+    if (m_generalOptions) m_generalOptions->insertWidget(m_generalOptions->count() - 1, option);
 }
 
 void GameOptionsWidget::updateKind() {

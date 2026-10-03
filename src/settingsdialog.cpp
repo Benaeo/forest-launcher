@@ -3,48 +3,30 @@
 
 #include <QCheckBox>
 #include <QDialogButtonBox>
-#include <QFormLayout>
 #include <QLabel>
-#include <QTabWidget>
 #include <QVBoxLayout>
 
 SettingsDialog::SettingsDialog(const QJsonObject &bootstrap, QWidget *parent)
     : QDialog(parent), m_original(bootstrap.value("settings").toObject()) {
-    setWindowTitle("Settings");
-    setMinimumWidth(620);
+    setWindowTitle("Settings — General");
+    setMinimumWidth(960);
     auto *layout = new QVBoxLayout(this);
-    auto *tabs = new QTabWidget(this);
-    tabs->setObjectName("settingsTabs");
-    auto *general = new QWidget(tabs);
-    auto *generalLayout = new QVBoxLayout(general);
-    auto *form = new QFormLayout;
-    const auto umu = bootstrap.value("umu").toObject();
-    auto *umuStatus = new QLabel(this);
-    umuStatus->setObjectName("umuStatus");
-    umuStatus->setTextFormat(Qt::PlainText);
-    umuStatus->setWordWrap(true);
-    const auto version = umu.value("version").toString();
-    umuStatus->setText(version.isEmpty() ? "Managed automatically"
-        : "UMU " + version + " — managed automatically");
-    QString details = umu.value("path").toString();
-    if (!umu.value("last_error").toString().isEmpty()) details += "\n" + umu.value("last_error").toString();
-    umuStatus->setToolTip(details);
-    form->addRow("UMU launcher", umuStatus);
-    m_closeAfter = new QCheckBox("Close Forest after launching a game", this);
+    auto *heading = new QLabel("General", this);
+    heading->setObjectName("settingsGeneralHeading");
+    auto font = heading->font();
+    font.setBold(true);
+    heading->setFont(font);
+    layout->addWidget(heading);
+    m_defaults = new GameOptionsWidget(m_original.value("new_game_defaults").toObject(), bootstrap, this, true);
+    m_closeAfter = new QCheckBox("Close Forest after launch", this);
+    m_closeAfter->setObjectName("closeAfterLaunchCheck");
+    m_closeAfter->setToolTip("Applies to all games. Close the launcher after a successful launch; the game continues independently.");
     m_closeAfter->setChecked(m_original.value("close_after_launch").toBool());
-    form->addRow(QString(), m_closeAfter);
-    generalLayout->addLayout(form);
-    generalLayout->addStretch();
-    tabs->addTab(general, "General");
-    auto *defaults = new QWidget(tabs);
-    auto *defaultsLayout = new QVBoxLayout(defaults);
-    auto *hint = new QLabel("These options prefill newly added games. Existing game profiles are not rewritten.\nReview or override them in the Add game dialog.", defaults);
+    m_defaults->addGeneralOption(m_closeAfter);
+    layout->addWidget(m_defaults);
+    auto *hint = new QLabel("Game options prefill newly added games; existing profiles are unchanged. Auto-close applies to all games.", this);
     hint->setWordWrap(true);
-    defaultsLayout->addWidget(hint);
-    m_defaults = new GameOptionsWidget(m_original.value("new_game_defaults").toObject(), bootstrap, defaults, true);
-    defaultsLayout->addWidget(m_defaults);
-    tabs->addTab(defaults, "New game defaults");
-    layout->addWidget(tabs);
+    layout->addWidget(hint);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, this);
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
