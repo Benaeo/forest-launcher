@@ -49,15 +49,30 @@ def steam_libraries(steam_root: Path | None) -> list[Path]:
     return libraries
 
 
-def discover_protons(steam_root: Path | None = None) -> list[dict]:
-    # Stable alias paths survive runner upgrades and symlink target changes.
-    root = proton_directory()
-    return [{"id": str(root / name), "label": name,
-             "installed": (root / name / "proton").is_file()} for name in LATEST_PROTONS]
+def discover_protons(steam_root: Path | None = None, *, directory: Path | None = None) -> list[dict]:
+    root = directory if directory is not None else proton_directory()
+    latest = [{"id": str(root / name), "label": name,
+               "installed": (root / name / "proton").is_file()} for name in LATEST_PROTONS]
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        entries = []
+    seen = {(root / name).resolve() for name in LATEST_PROTONS if (root / name / "proton").is_file()}
+    versions = []
+    for path in sorted(entries):
+        if path.name.startswith(".") or path.name in LATEST_PROTONS or not (path / "proton").is_file():
+            continue
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        versions.append({"id": str(path), "label": path.name, "installed": True})
+    versions.sort(key=lambda item: (tuple(-int(number) for number in re.findall(r"\d+", item["label"])), item["label"].casefold()))
+    return latest + versions
 
 
 def discover_installed_protons(steam_root: Path | None = None) -> list[dict]:
-    # Legacy automatic selections only; never exposed in normal runner selectors.
+    # Broader compatibility lookup for legacy automatic selections.
     roots = [
         Path.home() / ".local/share/Steam/compatibilitytools.d",
         Path.home() / ".var/app/com.valvesoftware.Steam/.local/share/Steam/compatibilitytools.d",

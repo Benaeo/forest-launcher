@@ -17,6 +17,8 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QProgressBar>
+#include <QSignalBlocker>
+#include <QSet>
 #include <QTabWidget>
 #include <QVBoxLayout>
 
@@ -48,6 +50,10 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     auto *prefixRow = new QHBoxLayout;
     prefixRow->addWidget(m_prefix, 1);
     prefixRow->addWidget(m_prefixBrowse);
+    const auto frontend = bootstrap.value("frontend").toObject();
+    const auto dataRoot = frontend.value("data_root").toString();
+    m_runnerRoot = dataRoot.isEmpty() ? QDir::homePath() + "/.local/share/Steam/compatibilitytools.d"
+                                    : dataRoot + "/compatibilitytools.d";
     m_proton = new QComboBox(this);
     m_proton->setObjectName("gameProton");
     const QStringList latestNames{"Proton-CachyOS Latest", "Proton-GE Latest"};
@@ -56,27 +62,12 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
         for (const auto &value : bootstrap.value("protons").toArray()) {
             if (value.toObject().value("label").toString() == name) { build = value.toObject(); break; }
         }
-        m_proton->addItem(name, build.value("id").toString(name));
-        m_proton->setItemData(m_proton->count() - 1, build.value("installed").toBool()
-            ? build.value("id").toString() : "Not installed. Expected at " + QDir::homePath()
-                + "/.local/share/Steam/compatibilitytools.d/" + name, Qt::ToolTipRole);
+        m_latestIds.append(build.value("id").toString(m_runnerRoot + "/" + name));
     }
     auto proton = options.value("proton").toString("default");
     if (proton.isEmpty() || proton == "default")
         proton = bootstrap.value("settings").toObject().value("default_proton").toString(latestNames.first());
-    auto index = m_proton->findData(proton);
-    if (index < 0) index = m_proton->findText(proton);
-    m_proton->setCurrentIndex(index);
-    if (index < 0) m_preservedProton = proton;
-    m_proton->setPlaceholderText("Existing selection (unchanged)");
-    auto *legacyProton = new QLabel("Existing selection: " + proton + "\nPreserved until you choose a Latest runner.", this);
-    legacyProton->setObjectName("legacyProtonSelection");
-    legacyProton->setTextFormat(Qt::PlainText);
-    legacyProton->setWordWrap(true);
-    legacyProton->setVisible(index < 0);
-    connect(m_proton, &QComboBox::currentIndexChanged, legacyProton, [legacyProton](int selected) {
-        legacyProton->setVisible(selected < 0);
-    });
+    refreshProtonChoices(proton);
     m_arguments = new QLineEdit(options.value("arguments").toString(), this);
     m_arguments->setObjectName("gameArguments");
     m_arguments->setPlaceholderText("Optional arguments, e.g. -fullscreen");
@@ -164,10 +155,6 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     m_managerButton = new QPushButton("Proton Manager", this);
     m_managerButton->setObjectName("protonManagerButton");
     form->addRow(QString(), m_managerButton);
-    const auto frontend = bootstrap.value("frontend").toObject();
-    const auto dataRoot = frontend.value("data_root").toString();
-    m_runnerRoot = dataRoot.isEmpty() ? QDir::homePath() + "/.local/share/Steam/compatibilitytools.d"
-                                    : dataRoot + "/compatibilitytools.d";
     connect(m_downloadLatest, &QPushButton::clicked, this, [this, frontend] {
         if (m_latestDownloading) return;
         const auto family = m_proton->currentIndex() == 0 ? "cachyos" : "ge";
@@ -210,16 +197,13 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     });
     connect(m_proton, &QComboBox::currentIndexChanged, this, [this] { updateLatestButton(); });
     connect(m_proton, &QComboBox::activated, this, [this] { updateLatestButton(); });
-    connect(m_managerButton, &QPushButton::clicked, this, [this, frontend, legacyProton] {
+    connect(m_managerButton, &QPushButton::clicked, this, [this, frontend] {
+        const auto previous = protonSelection();
         ProtonManager manager(frontend.value("backend").toString(), frontend.value("data_root").toString(), this);
-        if (manager.exec() == QDialog::Accepted && !manager.selectedVersion().isEmpty()) {
-            m_preservedProton = manager.selectedVersion();
-            m_proton->setCurrentIndex(-1);
-            legacyProton->setText("Selected version: " + m_preservedProton);
-            legacyProton->setVisible(true);
-        }
+        const bool selected = manager.exec() == QDialog::Accepted && !manager.selectedVersion().isEmpty();
+        refreshProtonChoices(selected ? manager.selectedVersion() : previous);
+        updateLatestButton();
     });
-    form->addRow(QString(), legacyProton);
     form->addRow("Arguments", m_arguments);
     form->addRow("Tags", m_tags);
     if (!defaultsEditor) {
@@ -268,7 +252,42 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
 
 QString GameOptionsWidget::kind() const { return m_kind->currentData().toString(); }
 QString GameOptionsWidget::protonSelection() const {
-    return m_proton->currentIndex() < 0 ? m_preservedProton : m_proton->currentData().toString();
+    return m_proton->currentData().toString();
+}
+
+void GameOptionsWidget::refreshProtonChoices(const QString &selection) {
+    const QSignalBlocker blocker(m_proton);
+    m_proton->clear();
+    const QStringList latestNames{"Proton-CachyOS Latest", "Proton-GE Latest"};
+    for (int index = 0; index < latestNames.size(); ++index) {
+        m_proton->addItem(latestNames[index], m_latestIds[index]);
+        m_proton->setItemData(index, m_runnerRoot + "/" + latestNames[index], Qt::ToolTipRole);
+    }
+    QSet<QString> seen;
+    for (const auto &name : latestNames) {
+        const QFileInfo runner(m_runnerRoot + "/" + name);
+        if (QFileInfo::exists(runner.filePath() + "/proton")) seen.insert(runner.canonicalFilePath());
+    }
+    const auto entries = QDir(m_runnerRoot).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const auto &runner : entries) {
+        if (latestNames.contains(runner.fileName()) || !QFileInfo::exists(runner.filePath() + "/proton")
+            || seen.contains(runner.canonicalFilePath())) continue;
+        seen.insert(runner.canonicalFilePath());
+        m_proton->addItem(runner.fileName(), runner.absoluteFilePath());
+        m_proton->setItemData(m_proton->count() - 1, runner.absoluteFilePath(), Qt::ToolTipRole);
+    }
+    auto index = m_proton->findData(selection);
+    if (index < 0) index = m_proton->findText(selection);
+    if (index < 0 && !selection.isEmpty()) {
+        auto label = QFileInfo(selection).fileName();
+        if (selection == "auto") label = "Automatic (legacy)";
+        if (label.isEmpty()) label = selection;
+        if (!QFileInfo::exists(selection + "/proton")) label += " (unavailable)";
+        m_proton->addItem(label, selection);
+        index = m_proton->count() - 1;
+        m_proton->setItemData(index, selection, Qt::ToolTipRole);
+    }
+    m_proton->setCurrentIndex(index >= 0 ? index : 0);
 }
 
 void GameOptionsWidget::setKind(const QString &kind) {
@@ -287,13 +306,14 @@ void GameOptionsWidget::finishLatestDownload() {
     m_latestProgressRow->hide();
     m_kind->setEnabled(true);
     m_managerButton->setEnabled(true);
+    refreshProtonChoices(protonSelection());
     if (auto *buttons = window()->findChild<QDialogButtonBox *>()) buttons->setEnabled(true);
     updateKind();
 }
 
 void GameOptionsWidget::updateLatestButton() {
     const auto name = m_proton->currentText();
-    const bool latest = m_proton->currentIndex() >= 0;
+    const bool latest = m_proton->currentIndex() >= 0 && m_proton->currentIndex() < 2;
     const auto path = m_runnerRoot + "/" + name;
     const bool installed = latest && QFileInfo::exists(path + "/proton");
     m_downloadLatest->setText(installed ? "Installed" : "Download Latest");

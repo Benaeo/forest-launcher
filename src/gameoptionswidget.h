@@ -26,6 +26,7 @@ public:
 private:
     void updateKind();
     void updateLatestButton();
+    void refreshProtonChoices(const QString &selection);
     void finishLatestDownload();
     QComboBox *m_kind;
     QLineEdit *m_prefix;
@@ -39,7 +40,7 @@ private:
     BackendClient *m_latestBackend = nullptr;
     bool m_latestDownloading = false;
     QString m_runnerRoot;
-    QString m_preservedProton;
+    QStringList m_latestIds;
     QLineEdit *m_arguments;
     QLineEdit *m_tags;
     QCheckBox *m_onlineFix;

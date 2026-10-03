@@ -5,7 +5,7 @@ from .launch import build_plan, launch_game
 from .steam import discover_protons, native_steam_root
 from .storage import Store
 from .shortcuts import Shortcuts
-from .proton import list_releases, download_version, download_latest, cleanup_downloads
+from .proton import list_releases, download_version, download_latest, cleanup_downloads, install_root
 from .umu import UMUManager
 
 
@@ -39,7 +39,7 @@ class Service:
             umu = UMUManager(self.paths).status()
             return {
                 "games": self.store.list_games(), "settings": settings,
-                "protons": discover_protons(native_steam_root()),
+                "protons": discover_protons(native_steam_root(), directory=install_root(self.paths)),
                 "capabilities": {"umu": umu["path"], "steam": shutil.which("steam") or ""},
                 "umu": umu,
                 "paths": {"data": str(self.paths.data), "state": str(self.paths.state)},
