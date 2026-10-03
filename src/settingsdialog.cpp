@@ -4,7 +4,6 @@
 
 #include <QCheckBox>
 #include <QDialogButtonBox>
-#include <QLabel>
 #include <QVBoxLayout>
 
 SettingsDialog::SettingsDialog(const QJsonObject &bootstrap, QWidget *parent)
@@ -12,12 +11,6 @@ SettingsDialog::SettingsDialog(const QJsonObject &bootstrap, QWidget *parent)
     setWindowTitle("Settings — General");
     setMinimumWidth(960);
     auto *layout = new QVBoxLayout(this);
-    auto *heading = new QLabel("General", this);
-    heading->setObjectName("settingsGeneralHeading");
-    auto font = heading->font();
-    font.setBold(true);
-    heading->setFont(font);
-    layout->addWidget(heading);
     m_defaults = new GameOptionsWidget(m_original.value("new_game_defaults").toObject(), bootstrap, this, true);
     m_closeAfter = new QCheckBox("Close Forest after launch", this);
     m_closeAfter->setObjectName("closeAfterLaunchCheck");
@@ -25,9 +18,6 @@ SettingsDialog::SettingsDialog(const QJsonObject &bootstrap, QWidget *parent)
     m_closeAfter->setChecked(m_original.value("close_after_launch").toBool());
     m_defaults->addGeneralOption(m_closeAfter);
     layout->addWidget(m_defaults);
-    auto *hint = new QLabel("Game options prefill newly added games; existing profiles are unchanged. Auto-close applies to all games.", this);
-    hint->setWordWrap(true);
-    layout->addWidget(hint);
     auto *buttons = new WideDialogButtons(this);
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
