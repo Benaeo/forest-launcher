@@ -6,6 +6,7 @@ import sqlite3
 from uuid import uuid4
 
 from .common import BackendError, Paths, default_shared_prefix, expand_path
+from .steam import DEFAULT_PROTON
 
 
 ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -191,7 +192,7 @@ class Store:
     def get_settings(self) -> dict:
         defaults = {
             "prefix_root": str(self.paths.default_prefix_root),
-            "default_proton": "auto",
+            "default_proton": DEFAULT_PROTON,
             "close_after_launch": False,
             "new_game_defaults": default_game_options(),
         }
@@ -200,6 +201,8 @@ class Store:
                 defaults[key].update(json.loads(value))
             elif key in defaults:
                 defaults[key] = json.loads(value)
+        if defaults["default_proton"] in ("", "default", "auto"):
+            defaults["default_proton"] = DEFAULT_PROTON
         if defaults["new_game_defaults"]["kind"] == "windows" and not defaults["new_game_defaults"]["prefix"]:
             defaults["new_game_defaults"]["prefix"] = str(default_shared_prefix())
         return defaults

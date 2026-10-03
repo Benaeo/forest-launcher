@@ -456,7 +456,16 @@ void MainWindow::runSmokeTest() {
     const QString exe = m_dataRoot + "/Forest smoke.exe";
     const QString umu = m_dataRoot + "/bin/umu-run";
     QDir().mkpath(m_dataRoot + "/bin");
-    for (const auto &path : {exe, umu}) {
+    const auto home = m_dataRoot + "/home";
+    const auto runners = home + "/.local/share/Steam/compatibilitytools.d";
+    const auto proton = runners + "/Proton-CachyOS Latest";
+    QDir().mkpath(proton);
+    qputenv("HOME", home.toUtf8());
+    m_bootstrap.insert("protons", QJsonArray{
+        QJsonObject{{"id", proton}, {"label", "Proton-CachyOS Latest"}, {"installed", true}},
+        QJsonObject{{"id", runners + "/Proton-GE Latest"}, {"label", "Proton-GE Latest"}, {"installed", false}},
+    });
+    for (const auto &path : {exe, umu, proton + "/proton"}) {
         QFile file(path);
         if (!file.open(QIODevice::WriteOnly)) { failure("Could not create fixtures."); return; }
         file.write("#!/bin/sh\nexit 99\n");
@@ -466,7 +475,7 @@ void MainWindow::runSmokeTest() {
     qputenv("PATH", (m_dataRoot + "/bin:").toUtf8() + qgetenv("PATH"));
     const QJsonObject defaults{{"arguments", "--forest-smoke"}, {"tags", QJsonArray{"smoke-test"}},
         {"environment", QJsonObject{{"FOREST_SMOKE", "1"}}}, {"prefix", m_dataRoot + "/shared-prefix"}};
-    m_backend->request("save_settings", {{"settings", QJsonObject{{"new_game_defaults", defaults}}}},
+    m_backend->request("save_settings", {{"settings", QJsonObject{{"default_proton", "Proton-CachyOS Latest"}, {"new_game_defaults", defaults}}}},
         [this, exe, failure](const QJsonObject &data) {
         m_bootstrap.insert("settings", data.value("settings"));
         GameDialog dialog({}, m_bootstrap, this);

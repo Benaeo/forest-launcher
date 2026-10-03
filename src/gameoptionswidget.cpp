@@ -44,17 +44,33 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     prefixRow->addWidget(m_prefixBrowse);
     m_proton = new QComboBox(this);
     m_proton->setObjectName("gameProton");
-    if (!defaultsEditor) m_proton->addItem("Current application default", "default");
-    m_proton->addItem("Automatic (prefer installed GE-Proton)", "auto");
-    for (const auto &value : bootstrap.value("protons").toArray()) {
-        const auto build = value.toObject();
-        m_proton->addItem(build.value("label").toString(), build.value("id").toString());
+    const QStringList latestNames{"Proton-CachyOS Latest", "Proton-GE Latest"};
+    for (const auto &name : latestNames) {
+        QJsonObject build;
+        for (const auto &value : bootstrap.value("protons").toArray()) {
+            if (value.toObject().value("label").toString() == name) { build = value.toObject(); break; }
+        }
+        m_proton->addItem(name, build.value("id").toString(name));
+        m_proton->setItemData(m_proton->count() - 1, build.value("installed").toBool()
+            ? build.value("id").toString() : "Not installed. Expected at " + QDir::homePath()
+                + "/.local/share/Steam/compatibilitytools.d/" + name, Qt::ToolTipRole);
     }
     auto proton = options.value("proton").toString("default");
-    if (defaultsEditor && (proton.isEmpty() || proton == "default"))
-        proton = bootstrap.value("settings").toObject().value("default_proton").toString("auto");
-    if (m_proton->findData(proton) < 0) m_proton->addItem(proton, proton);
-    m_proton->setCurrentIndex(m_proton->findData(proton));
+    if (proton.isEmpty() || proton == "default")
+        proton = bootstrap.value("settings").toObject().value("default_proton").toString(latestNames.first());
+    auto index = m_proton->findData(proton);
+    if (index < 0) index = m_proton->findText(proton);
+    m_proton->setCurrentIndex(index);
+    if (index < 0) m_preservedProton = proton;
+    m_proton->setPlaceholderText("Existing selection (unchanged)");
+    auto *legacyProton = new QLabel("Existing selection: " + proton + "\nPreserved until you choose a Latest runner.", this);
+    legacyProton->setObjectName("legacyProtonSelection");
+    legacyProton->setTextFormat(Qt::PlainText);
+    legacyProton->setWordWrap(true);
+    legacyProton->setVisible(index < 0);
+    connect(m_proton, &QComboBox::currentIndexChanged, legacyProton, [legacyProton](int selected) {
+        legacyProton->setVisible(selected < 0);
+    });
     m_arguments = new QLineEdit(options.value("arguments").toString(), this);
     m_arguments->setObjectName("gameArguments");
     m_arguments->setPlaceholderText("Optional arguments, e.g. -fullscreen");
@@ -71,6 +87,7 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     form->addRow("Game type", m_kind);
     form->addRow("Wine prefix", prefixRow);
     form->addRow(defaultsEditor ? "Default Proton" : "Proton build", m_proton);
+    form->addRow(QString(), legacyProton);
     form->addRow("Arguments", m_arguments);
     form->addRow("Tags", m_tags);
     form->addRow(QString(), m_onlineFix);
@@ -101,7 +118,9 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
 }
 
 QString GameOptionsWidget::kind() const { return m_kind->currentData().toString(); }
-QString GameOptionsWidget::protonSelection() const { return m_proton->currentData().toString(); }
+QString GameOptionsWidget::protonSelection() const {
+    return m_proton->currentIndex() < 0 ? m_preservedProton : m_proton->currentData().toString();
+}
 
 void GameOptionsWidget::setKind(const QString &kind) {
     const auto index = m_kind->findData(kind);
@@ -128,7 +147,7 @@ QJsonObject GameOptionsWidget::optionsData() const {
     return {
         {"kind", kind()},
         {"prefix", kind() == "windows" ? m_prefix->text().trimmed() : QString()},
-        {"proton", kind() == "windows" ? m_proton->currentData().toString() : "default"},
+        {"proton", kind() == "windows" ? protonSelection() : "default"},
         {"arguments", m_arguments->text()}, {"tags", tags},
         {"environment", m_environment->isEnabled() ? m_environment->toPlainText() : QString()},
     };

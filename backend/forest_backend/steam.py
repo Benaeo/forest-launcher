@@ -9,6 +9,14 @@ import time
 from .common import BackendError, xdg_home
 
 
+LATEST_PROTONS = ("Proton-CachyOS Latest", "Proton-GE Latest")
+DEFAULT_PROTON = LATEST_PROTONS[0]
+
+
+def proton_directory() -> Path:
+    return Path.home() / ".local/share/Steam/compatibilitytools.d"
+
+
 RUNTIMES = {
     "1391110": "SteamLinuxRuntime_soldier",
     "1628350": "SteamLinuxRuntime_sniper",
@@ -42,6 +50,14 @@ def steam_libraries(steam_root: Path | None) -> list[Path]:
 
 
 def discover_protons(steam_root: Path | None = None) -> list[dict]:
+    # Stable alias paths survive runner upgrades and symlink target changes.
+    root = proton_directory()
+    return [{"id": str(root / name), "label": name,
+             "installed": (root / name / "proton").is_file()} for name in LATEST_PROTONS]
+
+
+def discover_installed_protons(steam_root: Path | None = None) -> list[dict]:
+    # Legacy automatic selections only; never exposed in normal runner selectors.
     roots = [
         Path.home() / ".local/share/Steam/compatibilitytools.d",
         Path.home() / ".var/app/com.valvesoftware.Steam/.local/share/Steam/compatibilitytools.d",

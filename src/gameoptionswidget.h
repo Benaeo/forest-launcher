@@ -24,6 +24,7 @@ private:
     QLineEdit *m_prefix;
     QPushButton *m_prefixBrowse;
     QComboBox *m_proton;
+    QString m_preservedProton;
     QLineEdit *m_arguments;
     QLineEdit *m_tags;
     QCheckBox *m_onlineFix;

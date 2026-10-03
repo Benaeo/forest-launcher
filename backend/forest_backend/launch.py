@@ -6,7 +6,7 @@ import shutil
 import subprocess
 
 from .common import BackendError, Paths, expand_path
-from .steam import discover_protons, ensure_native_steam, native_steam_root, runtime_command, steam_libraries
+from .steam import discover_installed_protons, discover_protons, ensure_native_steam, native_steam_root, runtime_command, steam_libraries
 from .umu import ensure_umu, find_umu
 
 
@@ -34,13 +34,20 @@ def resolve_proton(game: dict, settings: dict, steam_root: Path | None, *, nativ
     if selected in ("", "default"):
         selected = settings["default_proton"]
     builds = discover_protons(steam_root)
+    for build in builds:
+        if selected in (build["id"], build["label"]):
+            if not build["installed"]:
+                raise BackendError(f'{build["label"]} is not installed. Install it at {build["id"]}.', "missing_proton")
+            return build["id"]
     if selected == "auto":
+        # Preserve explicitly stored legacy automatic selections.
+        builds = discover_installed_protons(steam_root)
         if builds:
             return builds[0]["id"]
         if not native:
             return "GE-Proton"
         raise BackendError("Install a Proton build in Steam before using online-fix.", "missing_proton")
-    for build in builds:
+    for build in discover_installed_protons(steam_root):
         if selected in (build["id"], build["label"], Path(build["id"]).name):
             return build["id"]
     candidate = Path(expand_path(selected))
