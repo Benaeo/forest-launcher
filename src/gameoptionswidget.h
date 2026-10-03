@@ -28,5 +28,8 @@ private:
     QLineEdit *m_arguments;
     QLineEdit *m_tags;
     QCheckBox *m_onlineFix;
+    QCheckBox *m_mangohud;
+    QCheckBox *m_preferSdl;
+    QCheckBox *m_noSleep;
     QPlainTextEdit *m_environment;
 };

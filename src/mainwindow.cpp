@@ -465,7 +465,8 @@ void MainWindow::runSmokeTest() {
         QJsonObject{{"id", proton}, {"label", "Proton-CachyOS Latest"}, {"installed", true}},
         QJsonObject{{"id", runners + "/Proton-GE Latest"}, {"label", "Proton-GE Latest"}, {"installed", false}},
     });
-    for (const auto &path : {exe, umu, proton + "/proton"}) {
+    const QString inhibitor = m_dataRoot + "/bin/systemd-inhibit";
+    for (const auto &path : {exe, umu, proton + "/proton", inhibitor}) {
         QFile file(path);
         if (!file.open(QIODevice::WriteOnly)) { failure("Could not create fixtures."); return; }
         file.write("#!/bin/sh\nexit 99\n");
@@ -474,7 +475,8 @@ void MainWindow::runSmokeTest() {
     }
     qputenv("PATH", (m_dataRoot + "/bin:").toUtf8() + qgetenv("PATH"));
     const QJsonObject defaults{{"arguments", "--forest-smoke"}, {"tags", QJsonArray{"smoke-test"}},
-        {"environment", QJsonObject{{"FOREST_SMOKE", "1"}}}, {"prefix", m_dataRoot + "/shared-prefix"}};
+        {"environment", QJsonObject{{"FOREST_SMOKE", "1"}}}, {"prefix", m_dataRoot + "/shared-prefix"},
+        {"mangohud", true}, {"prefer_sdl", true}, {"no_sleep", true}};
     m_backend->request("save_settings", {{"settings", QJsonObject{{"default_proton", "Proton-CachyOS Latest"}, {"new_game_defaults", defaults}}}},
         [this, exe, failure](const QJsonObject &data) {
         m_bootstrap.insert("settings", data.value("settings"));
@@ -496,7 +498,10 @@ void MainWindow::runSmokeTest() {
                 if (plan.value("mode").toString() != "umu"
                     || !plan.value("command").toArray().contains("--forest-smoke")
                     || plan.value("environment").toObject().value("FOREST_SMOKE").toString() != "1"
-                    || plan.value("prefix").toString() != m_dataRoot + "/shared-prefix") {
+                    || plan.value("prefix").toString() != m_dataRoot + "/shared-prefix"
+                    || plan.value("environment").toObject().value("MANGOHUD").toString() != "1"
+                    || plan.value("environment").toObject().value("PROTON_PREFER_SDL").toString() != "1"
+                    || plan.value("command").toArray().first().toString() != m_dataRoot + "/bin/systemd-inhibit") {
                     failure("Defaults did not reach the launch plan."); return;
                 }
                 m_backend->request("delete_game", {{"id", game.value("id")}},

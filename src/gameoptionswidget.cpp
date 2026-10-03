@@ -84,6 +84,23 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     m_onlineFix->setObjectName("onlineFixCheck");
     m_onlineFix->setToolTip("Use native Steam and Proton with App ID 480 and existing OnlineFix DLLs. No game files are changed.");
     m_onlineFix->setChecked(options.value("tags").toArray().contains("online-fix"));
+    m_mangohud = new QCheckBox("MangoHud", this);
+    m_mangohud->setObjectName("mangohudCheck");
+    m_mangohud->setChecked(options.value("mangohud").toBool());
+    m_mangohud->setToolTip("Set MANGOHUD=1 for the game (overrides the environment field). Requires MangoHud installed; API support depends on the game.");
+    m_preferSdl = new QCheckBox("SDL", this);
+    m_preferSdl->setObjectName("preferSdlCheck");
+    m_preferSdl->setChecked(options.value("prefer_sdl").toBool());
+    m_preferSdl->setToolTip("Set PROTON_PREFER_SDL=1 for Windows games (overrides the environment field). Support depends on the selected Proton build.");
+    m_noSleep = new QCheckBox("No sleep", this);
+    m_noSleep->setObjectName("noSleepCheck");
+    m_noSleep->setChecked(options.value("no_sleep").toBool());
+    m_noSleep->setToolTip("Prevent system sleep while the game command runs using systemd-inhibit. Does not change screen-lock settings. Steam library launches cannot be tracked this way.");
+    auto *tools = new QHBoxLayout;
+    tools->addWidget(m_mangohud);
+    tools->addWidget(m_preferSdl);
+    tools->addWidget(m_noSleep);
+    tools->addStretch();
     form->addRow("Game type", m_kind);
     form->addRow("Wine prefix", prefixRow);
     form->addRow(defaultsEditor ? "Default Proton" : "Proton build", m_proton);
@@ -91,6 +108,7 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     form->addRow("Arguments", m_arguments);
     form->addRow("Tags", m_tags);
     form->addRow(QString(), m_onlineFix);
+    form->addRow("Tools", tools);
     tabs->addTab(launch, "Launch");
     auto *advanced = new QWidget(tabs);
     auto *advancedLayout = new QVBoxLayout(advanced);
@@ -134,6 +152,14 @@ void GameOptionsWidget::updateKind() {
     m_proton->setEnabled(windows);
     m_onlineFix->setEnabled(windows);
     m_environment->setEnabled(kind() != "steam");
+    m_mangohud->setEnabled(kind() != "steam");
+    m_preferSdl->setEnabled(windows);
+    m_noSleep->setEnabled(kind() != "steam");
+    if (!windows) m_preferSdl->setChecked(false);
+    if (kind() == "steam") {
+        m_mangohud->setChecked(false);
+        m_noSleep->setChecked(false);
+    }
     if (!windows) m_onlineFix->setChecked(false);
 }
 
@@ -149,6 +175,9 @@ QJsonObject GameOptionsWidget::optionsData() const {
         {"prefix", kind() == "windows" ? m_prefix->text().trimmed() : QString()},
         {"proton", kind() == "windows" ? protonSelection() : "default"},
         {"arguments", m_arguments->text()}, {"tags", tags},
+        {"mangohud", m_mangohud->isEnabled() && m_mangohud->isChecked()},
+        {"prefer_sdl", m_preferSdl->isEnabled() && m_preferSdl->isChecked()},
+        {"no_sleep", m_noSleep->isEnabled() && m_noSleep->isChecked()},
         {"environment", m_environment->isEnabled() ? m_environment->toPlainText() : QString()},
     };
 }

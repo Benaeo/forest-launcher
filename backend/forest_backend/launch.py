@@ -94,6 +94,26 @@ class LaunchPlan:
 
 
 def build_plan(game: dict, settings: dict, paths: Paths, *, prepare_components=False) -> LaunchPlan:
+    inhibitor = None
+    if game["kind"] != "steam" and game.get("no_sleep", False):
+        inhibitor = shutil.which("systemd-inhibit")
+        if not inhibitor:
+            raise BackendError("No sleep requires systemd-inhibit. Install systemd or turn off No sleep.",
+                               "missing_inhibitor")
+    plan = base_plan(game, settings, paths, prepare_components=prepare_components)
+    if game["kind"] != "steam":
+        if game.get("mangohud", False):
+            plan.environment["MANGOHUD"] = "1"
+        if game["kind"] == "windows" and game.get("prefer_sdl", False):
+            plan.environment["PROTON_PREFER_SDL"] = "1"
+        if inhibitor:
+            plan.command = [inhibitor, "--what=sleep", "--who=Forest Launcher",
+                            "--why=Game is running", "--mode=block", "--no-ask-password",
+                            "--", *plan.command]
+    return plan
+
+
+def base_plan(game: dict, settings: dict, paths: Paths, *, prepare_components=False) -> LaunchPlan:
     arguments = shlex.split(game["arguments"])
     changes = dict(game["environment"])
     log_path = paths.state / "logs" / game["id"] / "launch.log"

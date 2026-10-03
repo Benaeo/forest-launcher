@@ -11,6 +11,7 @@ from .steam import DEFAULT_PROTON
 
 ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 GAME_KINDS = {"windows", "native", "steam"}
+LAUNCH_TOGGLES = ("mangohud", "prefer_sdl", "no_sleep")
 
 
 def now() -> str:
@@ -50,7 +51,8 @@ def parse_environment(value) -> dict[str, str]:
 
 def default_game_options() -> dict:
     return {"kind": "windows", "prefix": str(default_shared_prefix()), "proton": "default",
-            "arguments": "", "environment": {}, "tags": []}
+            "arguments": "", "environment": {}, "tags": [],
+            **dict.fromkeys(LAUNCH_TOGGLES, False)}
 
 
 def validate_game_options(value: dict) -> dict:
@@ -63,6 +65,11 @@ def validate_game_options(value: dict) -> dict:
         "arguments": text(value.get("arguments", ""), "Arguments", limit=32768),
         "environment": parse_environment(value.get("environment", {})),
     }
+    for key in LAUNCH_TOGGLES:
+        selected = value.get(key, False)
+        if type(selected) is not bool:
+            raise BackendError(f"{key} must be true or false.")
+        options[key] = selected
     if options["kind"] not in GAME_KINDS:
         raise BackendError("Unsupported game type.")
     try:
@@ -78,8 +85,10 @@ def validate_game_options(value: dict) -> dict:
     if options["kind"] != "windows":
         options["prefix"] = ""
         options["proton"] = "default"
+        options["prefer_sdl"] = False
     if options["kind"] == "steam":
         options["environment"] = {}
+        options.update(dict.fromkeys(LAUNCH_TOGGLES, False))
     return options
 
 
