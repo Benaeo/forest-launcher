@@ -14,6 +14,7 @@ add_executable(forest-launcher
     src/gameoptionswidget.cpp
     src/settingsdialog.cpp
     src/mainwindow.cpp
+    src/protonmanager.cpp
 )
 target_link_libraries(forest-launcher PRIVATE Qt6::Widgets)
 target_compile_definitions(forest-launcher PRIVATE

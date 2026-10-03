@@ -231,6 +231,7 @@ void MainWindow::refresh(const QString &selectedId) {
     setBusy(true);
     m_backend->request("bootstrap", {}, [this, selection](const QJsonObject &data) {
         m_bootstrap = data;
+        m_bootstrap.insert("frontend", QJsonObject{{"backend", m_shortcutContext.value("backend")}, {"data_root", m_dataRoot}});
         populateLibrary(selection);
         setBusy(false);
         statusBar()->showMessage(QString("%1 games · Forest %2")

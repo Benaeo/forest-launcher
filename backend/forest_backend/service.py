@@ -5,6 +5,7 @@ from .launch import build_plan, launch_game
 from .steam import discover_protons, native_steam_root
 from .storage import Store
 from .shortcuts import Shortcuts
+from .proton import list_releases, download_version, download_latest, cleanup_downloads
 from .umu import UMUManager
 
 
@@ -20,8 +21,9 @@ def validate_request(request):
 
 
 class Service:
-    def __init__(self, paths: Paths):
+    def __init__(self, paths: Paths, progress=lambda event: None):
         self.paths = paths
+        self.progress = progress
         self.store = Store(paths)
 
     def close(self):
@@ -32,6 +34,7 @@ class Service:
         action = request.get("action")
         params = request.get("params", {})
         if action == "bootstrap":
+            cleanup_downloads(self.paths)
             settings = self.store.get_settings()
             umu = UMUManager(self.paths).status()
             return {
@@ -41,6 +44,12 @@ class Service:
                 "umu": umu,
                 "paths": {"data": str(self.paths.data), "state": str(self.paths.state)},
             }
+        if action == "proton_releases":
+            return list_releases(self.paths, params.get("family"), params.get("page", 1))
+        if action == "download_latest_proton":
+            return download_latest(self.paths, params.get("family"), self.progress)
+        if action == "download_proton":
+            return download_version(self.paths, params.get("family"), params.get("tag"), self.progress)
         if action == "prepare_umu":
             force = params.get("force", False)
             if type(force) is not bool:

@@ -1,9 +1,13 @@
 #include "gameoptionswidget.h"
+#include "protonmanager.h"
+#include "backendclient.h"
 
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
+#include <QDialogButtonBox>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -12,6 +16,7 @@
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QProgressBar>
 #include <QTabWidget>
 #include <QVBoxLayout>
 
@@ -132,7 +137,88 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     }
     form->addRow("Game type", m_kind);
     form->addRow("Wine prefix", prefixRow);
-    form->addRow(defaultsEditor ? "Default Proton" : "Proton build", m_proton);
+    auto *protonRow = new QHBoxLayout;
+    protonRow->addWidget(m_proton, 1);
+    m_downloadLatest = new QPushButton("Download Latest", this);
+    m_downloadLatest->setObjectName("downloadLatestProtonButton");
+    protonRow->addWidget(m_downloadLatest);
+    form->addRow(defaultsEditor ? "Default Proton" : "Proton build", protonRow);
+    m_latestProgressRow = new QWidget(this);
+    m_latestProgressRow->setObjectName("latestDownloadProgressRow");
+    auto *progressLayout = new QHBoxLayout(m_latestProgressRow);
+    progressLayout->setContentsMargins(0, 0, 0, 0);
+    m_latestProgress = new QProgressBar(m_latestProgressRow);
+    m_latestProgress->setObjectName("latestDownloadProgress");
+    auto *cancelDownload = new QPushButton("Cancel", m_latestProgressRow);
+    cancelDownload->setObjectName("cancelLatestDownload");
+    progressLayout->addWidget(m_latestProgress, 1);
+    progressLayout->addWidget(cancelDownload);
+    m_latestProgressRow->hide();
+    form->addRow(QString(), m_latestProgressRow);
+    m_latestStatus = new QLabel(this);
+    m_latestStatus->setObjectName("latestDownloadStatus");
+    m_latestStatus->setTextFormat(Qt::PlainText);
+    m_latestStatus->setWordWrap(true);
+    m_latestStatus->hide();
+    form->addRow(QString(), m_latestStatus);
+    m_managerButton = new QPushButton("Proton Manager", this);
+    m_managerButton->setObjectName("protonManagerButton");
+    form->addRow(QString(), m_managerButton);
+    const auto frontend = bootstrap.value("frontend").toObject();
+    const auto dataRoot = frontend.value("data_root").toString();
+    m_runnerRoot = dataRoot.isEmpty() ? QDir::homePath() + "/.local/share/Steam/compatibilitytools.d"
+                                    : dataRoot + "/compatibilitytools.d";
+    connect(m_downloadLatest, &QPushButton::clicked, this, [this, frontend] {
+        if (m_latestDownloading) return;
+        const auto family = m_proton->currentIndex() == 0 ? "cachyos" : "ge";
+        m_latestDownloading = true;
+        m_proton->setEnabled(false);
+        m_kind->setEnabled(false);
+        m_managerButton->setEnabled(false);
+        if (auto *buttons = window()->findChild<QDialogButtonBox *>()) buttons->setEnabled(false);
+        m_latestProgress->setRange(0, 0);
+        m_latestProgressRow->show();
+        m_latestStatus->setText("Preparing download…");
+        m_latestStatus->show();
+        updateLatestButton();
+        m_latestBackend = new BackendClient(frontend.value("backend").toString(), frontend.value("data_root").toString(), this);
+        m_latestBackend->request("download_latest_proton", {{"family", family}},
+            [this](const QJsonObject &) {
+                m_latestStatus->hide();
+                finishLatestDownload();
+            }, [this](const QString &error) {
+                m_latestStatus->setText(error);
+                finishLatestDownload();
+            }, [this](const QJsonObject &event) {
+                const auto phase = event.value("phase").toString();
+                const double done = event.value("bytes").toDouble(), total = event.value("total").toDouble();
+                m_latestProgress->setRange(0, total > 0 ? 100 : 0);
+                if (total > 0) m_latestProgress->setValue(qBound(0, int(done * 100 / total), 100));
+                m_latestProgress->setFormat(phase == "extract" ? "Extracting: %p%" : "Downloading: %p%");
+                m_latestStatus->setText(phase == "download"
+                    ? QString("%1 / %2 MiB — %3 MiB/s").arg(done / 1048576.0, 0, 'f', 1)
+                        .arg(total / 1048576.0, 0, 'f', 1).arg(event.value("speed").toDouble() / 1048576.0, 0, 'f', 1)
+                    : phase == "verify" ? "Verifying checksum…" : "Extracting and installing…");
+            });
+    });
+    connect(cancelDownload, &QPushButton::clicked, this, [this] {
+        if (!m_latestDownloading) return;
+        delete m_latestBackend;
+        m_latestBackend = nullptr;
+        m_latestStatus->setText("Download cancelled.");
+        finishLatestDownload();
+    });
+    connect(m_proton, &QComboBox::currentIndexChanged, this, [this] { updateLatestButton(); });
+    connect(m_proton, &QComboBox::activated, this, [this] { updateLatestButton(); });
+    connect(m_managerButton, &QPushButton::clicked, this, [this, frontend, legacyProton] {
+        ProtonManager manager(frontend.value("backend").toString(), frontend.value("data_root").toString(), this);
+        if (manager.exec() == QDialog::Accepted && !manager.selectedVersion().isEmpty()) {
+            m_preservedProton = manager.selectedVersion();
+            m_proton->setCurrentIndex(-1);
+            legacyProton->setText("Selected version: " + m_preservedProton);
+            legacyProton->setVisible(true);
+        }
+    });
     form->addRow(QString(), legacyProton);
     form->addRow("Arguments", m_arguments);
     form->addRow("Tags", m_tags);
@@ -194,6 +280,29 @@ void GameOptionsWidget::addGeneralOption(QWidget *option) {
     if (m_generalOptions) m_generalOptions->insertWidget(m_generalOptions->count() - 1, option);
 }
 
+void GameOptionsWidget::finishLatestDownload() {
+    if (m_latestBackend) m_latestBackend->deleteLater();
+    m_latestBackend = nullptr;
+    m_latestDownloading = false;
+    m_latestProgressRow->hide();
+    m_kind->setEnabled(true);
+    m_managerButton->setEnabled(true);
+    if (auto *buttons = window()->findChild<QDialogButtonBox *>()) buttons->setEnabled(true);
+    updateKind();
+}
+
+void GameOptionsWidget::updateLatestButton() {
+    const auto name = m_proton->currentText();
+    const bool latest = m_proton->currentIndex() >= 0;
+    const auto path = m_runnerRoot + "/" + name;
+    const bool installed = latest && QFileInfo::exists(path + "/proton");
+    m_downloadLatest->setText(installed ? "Installed" : "Download Latest");
+    m_downloadLatest->setEnabled(kind() == "windows" && latest && !installed && !m_latestDownloading);
+    m_downloadLatest->setToolTip(latest ? (installed ? "Already installed: " : "Download the newest release to: ") + path
+                                     : "Choose a Latest runner to download it.");
+    if (latest) m_proton->setItemData(m_proton->currentIndex(), path, Qt::ToolTipRole);
+}
+
 void GameOptionsWidget::updateKind() {
     const bool windows = kind() == "windows";
     m_prefix->setEnabled(windows);
@@ -210,6 +319,7 @@ void GameOptionsWidget::updateKind() {
         m_noSleep->setChecked(false);
     }
     if (!windows) m_onlineFix->setChecked(false);
+    updateLatestButton();
 }
 
 QJsonObject GameOptionsWidget::optionsData() const {

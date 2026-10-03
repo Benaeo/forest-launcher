@@ -18,15 +18,20 @@ BackendClient::~BackendClient() {
         process->disconnect(this);
         for (auto *timer : process->findChildren<QTimer *>()) timer->stop();
         if (process->state() != QProcess::NotRunning) {
-            process->kill();
-            process->waitForFinished(1000);
+            process->terminate();
+            if (!process->waitForFinished(3000)) {
+                process->kill();
+                process->waitForFinished(1000);
+            }
         }
     }
 }
 
-void BackendClient::request(const QString &action, const QJsonObject &params, Success success, Failure failure) {
+void BackendClient::request(const QString &action, const QJsonObject &params, Success success, Failure failure, Success progress) {
     auto *process = new QProcess(this);
     auto completed = std::make_shared<bool>(false);
+    auto stderrBuffer = std::make_shared<QByteArray>();
+    auto diagnosticBuffer = std::make_shared<QByteArray>();
     const auto payload = QJsonDocument(QJsonObject{
         {"protocol", 1}, {"action", action}, {"params", params}
     }).toJson(QJsonDocument::Compact);
@@ -50,12 +55,26 @@ void BackendClient::request(const QString &action, const QJsonObject &params, Su
             process->deleteLater();
         }
     });
+    connect(process, &QProcess::readyReadStandardError, this, [process, completed, stderrBuffer, diagnosticBuffer, progress] {
+        *stderrBuffer += process->readAllStandardError();
+        int newline;
+        while ((newline = stderrBuffer->indexOf('\n')) >= 0) {
+            const auto line = stderrBuffer->left(newline);
+            stderrBuffer->remove(0, newline + 1);
+            if (line.startsWith("FOREST_PROGRESS ")) {
+                const auto event = QJsonDocument::fromJson(line.mid(16));
+                if (!*completed && progress && event.isObject()) progress(event.object());
+            } else {
+                *diagnosticBuffer += line + '\n';
+            }
+        }
+    });
     connect(process, &QProcess::finished, this,
-            [process, completed, success, failure](int exitCode, QProcess::ExitStatus exitStatus) {
+            [process, completed, success, failure, stderrBuffer, diagnosticBuffer](int exitCode, QProcess::ExitStatus exitStatus) {
         if (*completed) return;
         *completed = true;
         const auto output = process->readAllStandardOutput().trimmed();
-        const auto diagnostics = QString::fromUtf8(process->readAllStandardError()).trimmed();
+        const auto diagnostics = QString::fromUtf8(*diagnosticBuffer + *stderrBuffer + process->readAllStandardError()).trimmed();
         QJsonParseError error;
         const auto document = QJsonDocument::fromJson(output, &error);
         process->deleteLater();
@@ -84,7 +103,7 @@ void BackendClient::request(const QString &action, const QJsonObject &params, Su
         failure("The backend request timed out. Check your connection or Steam and try again.");
         process->deleteLater();
     });
-    deadline->start(action == "prepare_umu" || action == "launch_game" ? 120000 : 90000);
+    deadline->start((action == "download_proton" || action == "download_latest_proton") ? 3600000 : action == "prepare_umu" || action == "launch_game" ? 120000 : 90000);
     const auto python = QStandardPaths::findExecutable("python3");
     process->start(python.isEmpty() ? "python3" : python, arguments);
 }

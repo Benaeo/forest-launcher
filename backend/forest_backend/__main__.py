@@ -1,5 +1,6 @@
 import argparse
 import json
+import signal
 import sys
 import traceback
 
@@ -25,7 +26,13 @@ def main() -> int:
             raise BackendError("Backend request must be valid UTF-8 JSON.") from None
         # Validate protocol before opening or creating the library.
         validate_request(request)
-        service = Service(Paths.create(args.data_root))
+        if request.get("action") in ("download_proton", "download_latest_proton"):
+            def cancel(signum, frame):
+                raise BackendError("Download cancelled.", "cancelled")
+            signal.signal(signal.SIGTERM, cancel)
+        def progress(event):
+            print("FOREST_PROGRESS " + json.dumps(event), file=sys.stderr, flush=True)
+        service = Service(Paths.create(args.data_root), progress)
         response = {"protocol": PROTOCOL_VERSION, "ok": True, "data": service.dispatch(request)}
         exit_code = 0
     except BackendError as exc:
