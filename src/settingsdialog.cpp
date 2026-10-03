@@ -2,15 +2,9 @@
 #include "gameoptionswidget.h"
 
 #include <QCheckBox>
-#include <QComboBox>
 #include <QDialogButtonBox>
-#include <QFileDialog>
 #include <QFormLayout>
-#include <QHBoxLayout>
-#include <QJsonArray>
 #include <QLabel>
-#include <QLineEdit>
-#include <QPushButton>
 #include <QTabWidget>
 #include <QVBoxLayout>
 
@@ -24,14 +18,6 @@ SettingsDialog::SettingsDialog(const QJsonObject &bootstrap, QWidget *parent)
     auto *general = new QWidget(tabs);
     auto *generalLayout = new QVBoxLayout(general);
     auto *form = new QFormLayout;
-    m_prefixRoot = new QLineEdit(m_original.value("prefix_root").toString(), this);
-    m_prefixRoot->setObjectName("prefixRoot");
-    m_prefixRoot->setToolTip("Storage for automatically allocated per-game prefixes. A fixed new-game prefix can be set in New game defaults.");
-    auto *prefixBrowse = new QPushButton("Browse…", this);
-    auto *prefixRow = new QHBoxLayout;
-    prefixRow->addWidget(m_prefixRoot, 1);
-    prefixRow->addWidget(prefixBrowse);
-    form->addRow("Automatic prefix storage", prefixRow);
     const auto umu = bootstrap.value("umu").toObject();
     auto *umuStatus = new QLabel(this);
     umuStatus->setObjectName("umuStatus");
@@ -63,15 +49,10 @@ SettingsDialog::SettingsDialog(const QJsonObject &bootstrap, QWidget *parent)
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    connect(prefixBrowse, &QPushButton::clicked, this, [this] {
-        const auto path = QFileDialog::getExistingDirectory(this, "Choose automatic prefix storage", m_prefixRoot->text());
-        if (!path.isEmpty()) m_prefixRoot->setText(path);
-    });
 }
 
 QJsonObject SettingsDialog::settingsData() const {
     auto settings = m_original;
-    settings.insert("prefix_root", m_prefixRoot->text());
     settings.insert("default_proton", m_defaults->protonSelection());
     settings.remove("umu_program");
     settings.insert("close_after_launch", m_closeAfter->isChecked());

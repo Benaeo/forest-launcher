@@ -5,8 +5,6 @@
 
 class GameOptionsWidget;
 class QCheckBox;
-class QComboBox;
-class QLineEdit;
 
 class SettingsDialog : public QDialog {
 public:
@@ -14,7 +12,6 @@ public:
     QJsonObject settingsData() const;
 private:
     QJsonObject m_original;
-    QLineEdit *m_prefixRoot;
     QCheckBox *m_closeAfter;
     GameOptionsWidget *m_defaults;
 };

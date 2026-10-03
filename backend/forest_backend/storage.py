@@ -1,12 +1,11 @@
 from datetime import datetime, timezone
 import json
-from pathlib import Path
 import re
 import shlex
 import sqlite3
 from uuid import uuid4
 
-from .common import BackendError, Paths, expand_path
+from .common import BackendError, Paths, default_shared_prefix, expand_path
 
 
 ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -49,7 +48,7 @@ def parse_environment(value) -> dict[str, str]:
 
 
 def default_game_options() -> dict:
-    return {"kind": "windows", "prefix": "", "proton": "default",
+    return {"kind": "windows", "prefix": str(default_shared_prefix()), "proton": "default",
             "arguments": "", "environment": {}, "tags": []}
 
 
@@ -159,11 +158,15 @@ class Store:
             game_id = str(uuid4())
             if game["kind"] == "windows":
                 if not game["prefix"]:
-                    game["prefix"] = str(Path(settings["prefix_root"]) / game_id)
+                    game["prefix"] = settings["new_game_defaults"]["prefix"] or str(default_shared_prefix())
                 if game["proton"] in ("", "default"):
                     game["proton"] = settings["default_proton"]
         else:
+            previous = self.get_game(game_id)
             game = validate_game(value)
+            if game["kind"] == "windows" and not game["prefix"] and (previous["prefix"] or previous["kind"] != "windows"):
+                # Clearing an explicit prefix resets it; untouched legacy blanks stay legacy.
+                game["prefix"] = self.get_settings()["new_game_defaults"]["prefix"] or str(default_shared_prefix())
         document = json.dumps(game, ensure_ascii=False)
         with self.connection:
             if not creating:
@@ -197,6 +200,8 @@ class Store:
                 defaults[key].update(json.loads(value))
             elif key in defaults:
                 defaults[key] = json.loads(value)
+        if defaults["new_game_defaults"]["kind"] == "windows" and not defaults["new_game_defaults"]["prefix"]:
+            defaults["new_game_defaults"]["prefix"] = str(default_shared_prefix())
         return defaults
 
     def save_settings(self, values: dict) -> dict:
@@ -221,6 +226,8 @@ class Store:
                     raise BackendError("Default Proton selections must agree.")
                 values["default_proton"] = options["proton"]
             options["proton"] = "default"
+            if options["kind"] == "windows" and not options["prefix"]:
+                options["prefix"] = str(default_shared_prefix())
             values["new_game_defaults"] = options
         settings.update(values)
         settings["prefix_root"] = expand_path(settings["prefix_root"])

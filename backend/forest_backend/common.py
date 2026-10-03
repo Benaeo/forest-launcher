@@ -13,6 +13,10 @@ def expand_path(value: str) -> str:
     return os.path.abspath(os.path.expandvars(os.path.expanduser(value))) if value else ""
 
 
+def default_shared_prefix() -> Path:
+    return Path.home() / "Games/forest-launcher/default"
+
+
 def xdg_home(key: str, fallback: Path) -> Path:
     value = os.environ.get(key, "")
     return Path(value) if value and Path(value).is_absolute() else fallback
@@ -42,4 +46,5 @@ class Paths:
 
     @property
     def default_prefix_root(self):
+        # Retained only to resolve legacy profiles with an empty prefix.
         return self.data / "prefixes"

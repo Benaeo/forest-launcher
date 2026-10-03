@@ -2,6 +2,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDir>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -30,7 +31,13 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     m_kind->setCurrentIndex(qMax(0, m_kind->findData(options.value("kind").toString("windows"))));
     m_prefix = new QLineEdit(options.value("prefix").toString(), this);
     m_prefix->setObjectName("gamePrefix");
-    m_prefix->setPlaceholderText("Automatic: a dedicated prefix for each new game");
+    const auto builtInPrefix = QDir::homePath() + "/Games/forest-launcher/default";
+    auto sharedPrefix = bootstrap.value("settings").toObject().value("new_game_defaults").toObject().value("prefix").toString();
+    if (defaultsEditor || sharedPrefix.isEmpty()) sharedPrefix = builtInPrefix;
+    m_prefix->setPlaceholderText("Shared default: " + sharedPrefix);
+    m_prefix->setToolTip(defaultsEditor
+        ? "All new Windows games share this prefix unless overridden. Leave blank to restore " + builtInPrefix + "."
+        : "Override the shared prefix for this game, or leave blank to use " + sharedPrefix + ".");
     m_prefixBrowse = new QPushButton("Browse…", this);
     auto *prefixRow = new QHBoxLayout;
     prefixRow->addWidget(m_prefix, 1);

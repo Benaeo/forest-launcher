@@ -19,6 +19,11 @@ GameDialog::GameDialog(const QJsonObject &game, const QJsonObject &bootstrap, QW
     auto initial = creating
         ? bootstrap.value("settings").toObject().value("new_game_defaults").toObject() : QJsonObject();
     for (auto it = game.begin(); it != game.end(); ++it) initial.insert(it.key(), it.value());
+    if (!creating && initial.value("kind").toString() == "windows" && initial.value("prefix").toString().isEmpty()) {
+        // Display the effective legacy path instead of implying the new shared default.
+        initial.insert("prefix", bootstrap.value("settings").toObject().value("prefix_root").toString()
+            + "/" + game.value("id").toString());
+    }
     setWindowTitle(creating ? "Add game" : "Edit game");
     setMinimumWidth(570);
     auto *layout = new QVBoxLayout(this);
