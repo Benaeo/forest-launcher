@@ -1,0 +1,6 @@
+/build*/
+/.dev-tools/
+/.venv/
+__pycache__/
+*.py[cod]
+*.pkg.tar.*

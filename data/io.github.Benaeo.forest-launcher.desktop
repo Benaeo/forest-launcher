@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Forest Launcher
+Comment=A native game launcher for Linux
+Exec=forest-launcher %f
+Icon=applications-games
+Terminal=false
+Categories=Game;Qt;
+Keywords=Games;Proton;Wine;Steam;UMU;
+MimeType=application/x-ms-dos-executable;application/vnd.microsoft.portable-executable;
+StartupNotify=true
