@@ -15,7 +15,6 @@ public:
 private:
     QJsonObject m_original;
     QLineEdit *m_prefixRoot;
-    QLineEdit *m_umu;
     QCheckBox *m_closeAfter;
     GameOptionsWidget *m_defaults;
 };

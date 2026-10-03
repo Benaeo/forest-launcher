@@ -34,10 +34,14 @@ private:
     void showError(const QString &message);
     void setBusy(bool busy);
     void runSmokeTest();
+    void prepareUmu();
+    void updateUmuStatus();
     BackendClient *m_backend;
     QString m_dataRoot;
     bool m_smokeTest;
     bool m_smokeStarted = false;
+    bool m_umuStarted = false;
+    bool m_umuUpdating = false;
     bool m_busy = true;
     QJsonObject m_bootstrap;
     QStandardItemModel *m_model;
@@ -51,6 +55,7 @@ private:
     QLabel *m_proton;
     QLabel *m_tags;
     QLabel *m_lastLaunched;
+    QLabel *m_umuStatus;
     QPushButton *m_play;
     QPushButton *m_edit;
     QPushButton *m_log;

@@ -179,6 +179,10 @@ MainWindow::MainWindow(QString backendDirectory, QString dataRoot, bool smokeTes
     splitter->setSizes({330, 640});
     setCentralWidget(splitter);
     statusBar()->showMessage("Loading library…");
+    m_umuStatus = new QLabel(this);
+    m_umuStatus->setObjectName("umuStatusBar");
+    m_umuStatus->setTextFormat(Qt::PlainText);
+    statusBar()->addPermanentWidget(m_umuStatus);
 
     connect(search, &QLineEdit::textChanged, m_proxy, &QSortFilterProxyModel::setFilterFixedString);
     connect(m_library->selectionModel(), &QItemSelectionModel::currentChanged, this, [this] { updateSelection(); });
@@ -233,7 +237,10 @@ void MainWindow::refresh(const QString &selectedId) {
         if (m_smokeTest && !m_smokeStarted) {
             m_smokeStarted = true;
             runSmokeTest();
+        } else if (!m_smokeTest && !m_umuStarted) {
+            prepareUmu();
         }
+        updateUmuStatus();
     }, [this](const QString &error) { setBusy(false); showError(error); });
 }
 
@@ -257,9 +264,13 @@ void MainWindow::populateLibrary(const QString &selectedId) {
 
 void MainWindow::updateSelection() {
     const auto game = selectedGame();
+    const bool requiresUmu = game.value("kind").toString() == "windows" && !tagNames(game).contains("online-fix");
+    const bool waitingForUmu = requiresUmu && m_umuUpdating && !m_bootstrap.value("umu").toObject().value("available").toBool();
     const bool available = !m_busy && !game.isEmpty();
     for (auto *action : {m_editAction, m_removeAction, m_playAction, m_previewAction}) action->setEnabled(available);
     for (auto *button : {m_play, m_edit, m_log}) button->setEnabled(available);
+    m_play->setEnabled(available && !waitingForUmu);
+    m_playAction->setEnabled(available && !waitingForUmu);
     m_details->setCurrentIndex(game.isEmpty() ? 0 : 1);
     if (game.isEmpty()) return;
     m_title->setText(game.value("title").toString());
@@ -328,7 +339,7 @@ void MainWindow::removeSelected() {
 
 void MainWindow::launchSelected() {
     const auto game = selectedGame();
-    if (m_busy || game.isEmpty()) return;
+    if (m_busy || game.isEmpty() || !m_playAction->isEnabled()) return;
     setBusy(true);
     statusBar()->showMessage("Starting " + game.value("title").toString() + "…");
     m_backend->request("launch_game", {{"id", game.value("id")}}, [this, game](const QJsonObject &) {
@@ -377,6 +388,37 @@ void MainWindow::showSettings(const QJsonObject &pendingSettings) {
         });
 }
 
+void MainWindow::prepareUmu() {
+    m_umuStarted = true;
+    m_umuUpdating = true;
+    updateUmuStatus();
+    m_backend->request("prepare_umu", {}, [this](const QJsonObject &data) {
+        m_umuUpdating = false;
+        m_bootstrap.insert("umu", data.value("umu"));
+        updateUmuStatus();
+        const auto status = data.value("umu").toObject();
+        if (!status.value("available").toBool())
+            statusBar()->showMessage("UMU setup needs an internet connection. Play will retry setup.");
+        else if (!status.value("last_error").toString().isEmpty())
+            statusBar()->showMessage("UMU update unavailable; the existing launcher is ready.", 8000);
+    }, [this](const QString &error) {
+        m_umuUpdating = false;
+        auto status = m_bootstrap.value("umu").toObject();
+        status.insert("last_error", error);
+        m_bootstrap.insert("umu", status);
+        updateUmuStatus();
+        statusBar()->showMessage("Automatic UMU setup could not finish. Play will retry setup.");
+    });
+}
+
+void MainWindow::updateUmuStatus() {
+    const auto status = m_bootstrap.value("umu").toObject();
+    m_umuStatus->setText(m_umuUpdating ? "Checking UMU…" : status.value("available").toBool() ? "UMU ready" : "UMU setup needed");
+    m_umuStatus->setToolTip(status.value("last_error").toString().isEmpty()
+        ? status.value("path").toString() : status.value("last_error").toString());
+    updateSelection();
+}
+
 void MainWindow::showError(const QString &message) {
     if (m_smokeTest) {
         qCritical().noquote() << message;
@@ -412,7 +454,8 @@ void MainWindow::dropEvent(QDropEvent *event) {
 void MainWindow::runSmokeTest() {
     const auto failure = [this](const QString &error) { showError("Smoke test: " + error); };
     const QString exe = m_dataRoot + "/Forest smoke.exe";
-    const QString umu = m_dataRoot + "/mock-umu";
+    const QString umu = m_dataRoot + "/bin/umu-run";
+    QDir().mkpath(m_dataRoot + "/bin");
     for (const auto &path : {exe, umu}) {
         QFile file(path);
         if (!file.open(QIODevice::WriteOnly)) { failure("Could not create fixtures."); return; }
@@ -420,9 +463,10 @@ void MainWindow::runSmokeTest() {
         file.close();
         file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
     }
+    qputenv("PATH", (m_dataRoot + "/bin:").toUtf8() + qgetenv("PATH"));
     const QJsonObject defaults{{"arguments", "--forest-smoke"}, {"tags", QJsonArray{"smoke-test"}},
         {"environment", QJsonObject{{"FOREST_SMOKE", "1"}}}, {"prefix", m_dataRoot + "/shared-prefix"}};
-    m_backend->request("save_settings", {{"settings", QJsonObject{{"umu_program", umu}, {"new_game_defaults", defaults}}}},
+    m_backend->request("save_settings", {{"settings", QJsonObject{{"new_game_defaults", defaults}}}},
         [this, exe, failure](const QJsonObject &data) {
         m_bootstrap.insert("settings", data.value("settings"));
         GameDialog dialog({}, m_bootstrap, this);

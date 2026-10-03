@@ -189,7 +189,6 @@ class Store:
         defaults = {
             "prefix_root": str(self.paths.default_prefix_root),
             "default_proton": "auto",
-            "umu_program": "",
             "close_after_launch": False,
             "new_game_defaults": default_game_options(),
         }
@@ -209,9 +208,9 @@ class Store:
             raise BackendError("Unknown setting.")
         if "close_after_launch" in values and type(values["close_after_launch"]) is not bool:
             raise BackendError("Close after launch must be true or false.")
-        for key in ("prefix_root", "default_proton", "umu_program"):
+        for key in ("prefix_root", "default_proton"):
             if key in values:
-                values[key] = text(values[key], key, required=key != "umu_program")
+                values[key] = text(values[key], key, required=True)
         if "new_game_defaults" in values:
             options = values["new_game_defaults"]
             if not isinstance(options, dict) or set(options) - set(default_game_options()):

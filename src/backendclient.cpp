@@ -81,10 +81,10 @@ void BackendClient::request(const QString &action, const QJsonObject &params, Su
         *completed = true;
         process->kill();
         process->waitForFinished(1000);
-        failure("The backend request timed out. Check Steam and try again.");
+        failure("The backend request timed out. Check your connection or Steam and try again.");
         process->deleteLater();
     });
-    deadline->start(90000);
+    deadline->start(action == "prepare_umu" || action == "launch_game" ? 120000 : 90000);
     const auto python = QStandardPaths::findExecutable("python3");
     process->start(python.isEmpty() ? "python3" : python, arguments);
 }

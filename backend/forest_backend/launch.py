@@ -5,8 +5,9 @@ import shlex
 import shutil
 import subprocess
 
-from .common import BackendError, Paths, expand_path, xdg_home
+from .common import BackendError, Paths, expand_path
 from .steam import discover_protons, ensure_native_steam, native_steam_root, runtime_command, steam_libraries
+from .umu import ensure_umu, find_umu
 
 
 DLL_OVERRIDES = {
@@ -26,24 +27,6 @@ def merge_overrides(existing: str, additions: dict[str, str]) -> str:
     }
     entries.extend(f"{name}={mode}" for name, mode in additions.items() if name.casefold() not in configured)
     return ";".join(entries)
-
-
-def find_umu(configured="") -> str:
-    if configured:
-        configured = expand_path(configured) if "/" in configured else configured
-        result = shutil.which(configured)
-        if result:
-            return result
-        raise BackendError("The configured UMU executable was not found or is not executable.", "missing_umu")
-    result = shutil.which("umu-run")
-    if result:
-        return result
-    # Reuse an existing Faugus UMU installation without importing its GTK code.
-    data = xdg_home("XDG_DATA_HOME", Path.home() / ".local/share")
-    cached = data / "faugus-launcher/umu-run"
-    if cached.is_file() and os.access(cached, os.X_OK):
-        return str(cached)
-    raise BackendError("Install umu-launcher, or select an existing umu-run executable in Settings.", "missing_umu")
 
 
 def resolve_proton(game: dict, settings: dict, steam_root: Path | None, *, native=False) -> str:
@@ -103,7 +86,7 @@ class LaunchPlan:
         }
 
 
-def build_plan(game: dict, settings: dict, paths: Paths) -> LaunchPlan:
+def build_plan(game: dict, settings: dict, paths: Paths, *, prepare_components=False) -> LaunchPlan:
     arguments = shlex.split(game["arguments"])
     changes = dict(game["environment"])
     log_path = paths.state / "logs" / game["id"] / "launch.log"
@@ -128,7 +111,8 @@ def build_plan(game: dict, settings: dict, paths: Paths) -> LaunchPlan:
     changes.update({"WINEPREFIX": str(prefix), "PROTONPATH": proton})
     if not online_fix:
         changes.setdefault("UMU_USE_STEAM", "0")
-        return LaunchPlan([find_umu(settings["umu_program"]), str(executable), *arguments],
+        umu = ensure_umu(paths) if prepare_components else find_umu(paths)
+        return LaunchPlan([umu, str(executable), *arguments],
                           changes, str(executable.parent), log_path, str(prefix), "umu")
 
     if not steam_root or not shutil.which("steam"):
@@ -164,7 +148,7 @@ def build_plan(game: dict, settings: dict, paths: Paths) -> LaunchPlan:
 
 
 def launch_game(game: dict, settings: dict, paths: Paths) -> dict:
-    plan = build_plan(game, settings, paths)
+    plan = build_plan(game, settings, paths, prepare_components=True)
     if plan.mode == "online-fix":
         ensure_native_steam()
         compat_data, _ = native_prefix_layout(Path(plan.prefix), create=True)

@@ -32,14 +32,18 @@ SettingsDialog::SettingsDialog(const QJsonObject &bootstrap, QWidget *parent)
     prefixRow->addWidget(m_prefixRoot, 1);
     prefixRow->addWidget(prefixBrowse);
     form->addRow("Automatic prefix storage", prefixRow);
-    m_umu = new QLineEdit(m_original.value("umu_program").toString(), this);
-    m_umu->setObjectName("umuProgram");
-    m_umu->setPlaceholderText("Automatic: find installed umu-run");
-    auto *umuBrowse = new QPushButton("Browse…", this);
-    auto *umuRow = new QHBoxLayout;
-    umuRow->addWidget(m_umu, 1);
-    umuRow->addWidget(umuBrowse);
-    form->addRow("UMU executable", umuRow);
+    const auto umu = bootstrap.value("umu").toObject();
+    auto *umuStatus = new QLabel(this);
+    umuStatus->setObjectName("umuStatus");
+    umuStatus->setTextFormat(Qt::PlainText);
+    umuStatus->setWordWrap(true);
+    const auto version = umu.value("version").toString();
+    umuStatus->setText(version.isEmpty() ? "Managed automatically"
+        : "UMU " + version + " — managed automatically");
+    QString details = umu.value("path").toString();
+    if (!umu.value("last_error").toString().isEmpty()) details += "\n" + umu.value("last_error").toString();
+    umuStatus->setToolTip(details);
+    form->addRow("UMU launcher", umuStatus);
     m_closeAfter = new QCheckBox("Close Forest after launching a game", this);
     m_closeAfter->setChecked(m_original.value("close_after_launch").toBool());
     form->addRow(QString(), m_closeAfter);
@@ -63,17 +67,13 @@ SettingsDialog::SettingsDialog(const QJsonObject &bootstrap, QWidget *parent)
         const auto path = QFileDialog::getExistingDirectory(this, "Choose automatic prefix storage", m_prefixRoot->text());
         if (!path.isEmpty()) m_prefixRoot->setText(path);
     });
-    connect(umuBrowse, &QPushButton::clicked, this, [this] {
-        const auto path = QFileDialog::getOpenFileName(this, "Choose umu-run executable", m_umu->text());
-        if (!path.isEmpty()) m_umu->setText(path);
-    });
 }
 
 QJsonObject SettingsDialog::settingsData() const {
     auto settings = m_original;
     settings.insert("prefix_root", m_prefixRoot->text());
     settings.insert("default_proton", m_defaults->protonSelection());
-    settings.insert("umu_program", m_umu->text());
+    settings.remove("umu_program");
     settings.insert("close_after_launch", m_closeAfter->isChecked());
     auto options = m_defaults->optionsData();
     options.insert("proton", "default");

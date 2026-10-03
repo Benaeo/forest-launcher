@@ -1,9 +1,10 @@
 import shutil
 
 from .common import BackendError, Paths
-from .launch import build_plan, find_umu, launch_game
+from .launch import build_plan, launch_game
 from .steam import discover_protons, native_steam_root
 from .storage import Store
+from .umu import UMUManager
 
 
 PROTOCOL_VERSION = 1
@@ -31,16 +32,19 @@ class Service:
         params = request.get("params", {})
         if action == "bootstrap":
             settings = self.store.get_settings()
-            try:
-                umu = find_umu(settings["umu_program"])
-            except BackendError:
-                umu = ""
+            umu = UMUManager(self.paths).status()
             return {
                 "games": self.store.list_games(), "settings": settings,
                 "protons": discover_protons(native_steam_root()),
-                "capabilities": {"umu": umu, "steam": shutil.which("steam") or ""},
+                "capabilities": {"umu": umu["path"], "steam": shutil.which("steam") or ""},
+                "umu": umu,
                 "paths": {"data": str(self.paths.data), "state": str(self.paths.state)},
             }
+        if action == "prepare_umu":
+            force = params.get("force", False)
+            if type(force) is not bool:
+                raise BackendError("Force update must be true or false.")
+            return {"umu": UMUManager(self.paths).prepare(force=force)}
         if action == "list_games":
             return {"games": self.store.list_games()}
         if action == "save_game":
