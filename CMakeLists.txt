@@ -7,6 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets)
 
+option(FOREST_ARTWORK_PREVIEW "Enable the independent native artwork preview" ON)
+add_compile_definitions(FOREST_ARTWORK_PREVIEW=$<BOOL:${FOREST_ARTWORK_PREVIEW}>)
 
 add_executable(forest-launcher
     src/main.cpp

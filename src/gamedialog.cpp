@@ -2,6 +2,9 @@
 #include "gameoptionswidget.h"
 #include "dialogbuttons.h"
 #include "artworkdialog.h"
+#if FOREST_ARTWORK_PREVIEW
+#include "artworkpreview.h"
+#endif
 
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -230,6 +233,14 @@ bool GameDialog::chooseArtwork(bool startSearch, bool steamRequested) {
     if (m_iconBackend) { m_iconBackend->deleteLater(); m_iconBackend = nullptr; }
     setIconBusy(false);
     ArtworkDialog dialog(m_bootstrap, m_title->text(), m_artwork, isVisible() ? this : parentWidget(), steamRequested);
+#if FOREST_ARTWORK_PREVIEW
+    if (steamRequested) {
+        auto *preview = new ArtworkPreview(&dialog);
+        preview->setArtwork(m_artwork);
+        dialog.addPreview(preview);
+        dialog.selectionChanged = [preview](const QJsonObject &artwork) { preview->setArtwork(artwork); };
+    }
+#endif
     if (startSearch) dialog.startSearch();
     const bool accepted = dialog.exec() == QDialog::Accepted;
     m_bootstrap.insert("settings", dialog.settingsData());
