@@ -78,9 +78,9 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     m_tags = new QLineEdit(tags.join(", "), this);
     m_tags->setObjectName("gameTags");
     m_tags->setPlaceholderText("Optional comma-separated tags");
-    m_onlineFix = new QCheckBox("online-fix — Steam / Spacewar", this);
+    m_onlineFix = new QCheckBox("online-fix — Steam", this);
     m_onlineFix->setObjectName("onlineFixCheck");
-    m_onlineFix->setToolTip("Use native Steam and Proton with App ID 480 and existing OnlineFix DLLs. No game files are changed.");
+    m_onlineFix->setToolTip("Use native Steam and Proton with the [Main] FakeAppId from OnlineFix.ini or SteamFix.ini beside the game executable. A valid INI is required. No game files are changed.");
     m_onlineFix->setChecked(options.value("tags").toArray().contains("online-fix"));
     m_mangohud = new QCheckBox("MangoHud", this);
     m_mangohud->setObjectName("mangohudCheck");

@@ -6,6 +6,7 @@ import shutil
 import subprocess
 
 from .common import BackendError, Paths, expand_path
+from .onlinefix import resolve_fake_app_id
 from .steam import discover_installed_protons, discover_protons, ensure_native_steam, native_steam_root, runtime_command, steam_libraries
 from .umu import ensure_umu, find_umu
 
@@ -144,6 +145,7 @@ def base_plan(game: dict, settings: dict, paths: Paths, *, prepare_components=Fa
 
     if not steam_root or not shutil.which("steam"):
         raise BackendError("Online-fix requires an initialized native Steam installation.", "missing_steam")
+    app_id = resolve_fake_app_id(executable)
     proton_dir = Path(proton)
     runtime = runtime_command(proton_dir, steam_libraries(steam_root))
     compat_data, wine_prefix = native_prefix_layout(prefix)
@@ -151,13 +153,13 @@ def base_plan(game: dict, settings: dict, paths: Paths, *, prepare_components=Fa
     overrides = {name: mode for name, mode in DLL_OVERRIDES.items() if f"{name}.dll".casefold() in files}
     existing = changes.get("WINEDLLOVERRIDES", os.environ.get("WINEDLLOVERRIDES", ""))
     changes.update({
-        "SteamAppId": "480", "SteamGameId": "480", "SteamOverlayGameId": "480",
+        "SteamAppId": app_id, "SteamGameId": app_id, "SteamOverlayGameId": app_id,
         "UMU_USE_STEAM": "1", "WINEDLLOVERRIDES": merge_overrides(existing, overrides),
         "STEAM_COMPAT_CLIENT_INSTALL_PATH": str(steam_root),
         "STEAM_COMPAT_DATA_PATH": str(compat_data),
         "STEAM_COMPAT_INSTALL_PATH": str(executable.parent),
         "STEAM_COMPAT_SHADER_PATH": str(compat_data / "shadercache"),
-        "STEAM_COMPAT_APP_ID": "480", "WINEPREFIX": str(wine_prefix),
+        "STEAM_COMPAT_APP_ID": app_id, "WINEPREFIX": str(wine_prefix),
         "STEAM_COMPAT_TOOL_PATHS": str(proton_dir),
     })
     if runtime:
