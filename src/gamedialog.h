@@ -22,8 +22,10 @@ protected:
 private:
     void updateKind();
     void extractInitialIcon();
+    void extractIcon();
     void extractionFailed(const QString &error);
-    void chooseArtwork(bool startSearch = false, bool steamRequested = false);
+    void chooseIconSource();
+    bool chooseArtwork(bool startSearch = false, bool steamRequested = false);
     void updateIcon();
     void setIconBusy(bool busy);
     void validateAndAccept();

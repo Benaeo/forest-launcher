@@ -1,14 +1,31 @@
-"""Bounded private artwork storage; no third-party dependencies."""
+"""Bounded artwork storage and explicit, read-only SteamGridDB requests."""
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
 import stat
 import tempfile
+import unicodedata
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlencode, urlsplit
+from urllib.request import Request, build_opener, HTTPRedirectHandler
+
 from .common import BackendError, expand_path
+from .shortcuts import atomic_write
 
 MAX_IMAGE = 16 * 1024 * 1024
+MAX_JSON = 2 * 1024 * 1024
 KINDS = ("icon", "grid", "hero", "logo")
+API = "https://www.steamgriddb.com/api/v2"
+ROMAN = {str(n): r for n, r in enumerate(("I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"), 1)}
+
+
+def api_key(value):
+    if not isinstance(value, str) or len(value) > 256 or (value and not re.fullmatch(r"[A-Za-z0-9_-]+", value)):
+        raise BackendError("SteamGridDB API key must be a token without spaces.")
+    return value
+
 
 def image_extension(data):
     if data.startswith(b"\x89PNG\r\n\x1a\n"): return ".png"
@@ -87,6 +104,122 @@ def validate_artwork(value, paths):
     if not isinstance(value, dict) or set(value) - {*KINDS, "extracted_icon"}:
         raise BackendError("Artwork contains unsupported fields.")
     return {key: managed_image(paths, item) for key, item in value.items()}
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def request_bytes(url, limit, key=""):
+    headers = {"User-Agent": "Forest-Launcher", "Accept": "application/json" if key else "image/*"}
+    if key: headers["Authorization"] = "Bearer " + key
+    try:
+        with build_opener(NoRedirect()).open(Request(url, headers=headers), timeout=15) as response:
+            data = response.read(limit + 1)
+            if len(data) > limit:
+                raise BackendError("SteamGridDB response exceeds the size limit.")
+            return data
+    except HTTPError as error:
+        code = error.code
+        error.close()
+        if code == 401: raise BackendError("SteamGridDB API key is missing or invalid.", "invalid_api_key") from None
+        if code == 429: raise BackendError("SteamGridDB rate limit reached. Try again later.") from None
+        raise BackendError(f"SteamGridDB request failed (HTTP {code}).") from None
+    except (URLError, TimeoutError, OSError):
+        raise BackendError("Could not reach SteamGridDB. Check your connection and try again.") from None
+
+
+def api_json(endpoint, key):
+    if not api_key(key):
+        raise BackendError("Enter a SteamGridDB API key to browse artwork.", "missing_api_key")
+    try:
+        result = json.loads(request_bytes(API + endpoint, MAX_JSON, key))
+        if not isinstance(result, dict) or result.get("success") is not True or not isinstance(result.get("data"), list):
+            raise ValueError()
+        return result["data"]
+    except (ValueError, UnicodeError):
+        raise BackendError("SteamGridDB returned an invalid response.") from None
+
+
+def normalized(title):
+    tokens = re.findall(r"[\w]+", unicodedata.normalize("NFKC", title).casefold())
+    inverse = {v.casefold(): k for k, v in ROMAN.items()}
+    if tokens and tokens[-1] in inverse: tokens[-1] = inverse[tokens[-1]]
+    return " ".join(tokens)
+
+
+def search_variants(query, expanded=False):
+    # Always combine the entered title with its standalone sequel-number spelling.
+    # No fuzzy ranking, typo recovery, broad token searches or experimental toggle.
+    inverse = {value.casefold(): key for key, value in ROMAN.items()}
+    words = query.split()
+    alternate = list(words)
+    for index, word in enumerate(words):
+        replacement = ROMAN.get(word) or inverse.get(word.casefold())
+        if replacement:
+            alternate[index] = replacement
+    return list(dict.fromkeys([query, " ".join(alternate)]))
+
+
+def search_games(key, query, expanded=False):
+    if not isinstance(query, str) or not 1 <= len(query.strip()) <= 256 or "\0" in query or type(expanded) is not bool:
+        raise BackendError("Enter a game title of up to 256 characters.")
+    query = query.strip()
+    found = {}
+    for variant in search_variants(query, expanded):
+        for game in api_json("/search/autocomplete/" + quote(variant, safe=""), key)[:100]:
+            if (isinstance(game, dict) and type(game.get("id")) is int and game["id"] > 0
+                    and isinstance(game.get("name"), str) and len(game["name"]) <= 512):
+                found[game["id"]] = {"id": game["id"], "name": game["name"]}
+    return {"games": list(found.values())[:100]}
+
+
+def images(key, identity, kind, page=0):
+    if type(identity) is not int or identity <= 0 or kind not in KINDS or type(page) is not int or not 0 <= page <= 1000:
+        raise BackendError("Invalid artwork selection.")
+    category = {"icon": "icons", "grid": "grids", "hero": "heroes", "logo": "logos"}[kind]
+    query = urlencode({"types": "static", "nsfw": "false", "epilepsy": "false", "limit": 30, "page": page})
+    result = []
+    for value in api_json(f"/{category}/game/{identity}?{query}", key)[:30]:
+        if isinstance(value, dict) and all(type(value.get(field)) is str for field in ("url", "thumb")):
+            if allowed_url(value["url"]) and allowed_url(value["thumb"]):
+                result.append({"url": value["url"], "thumb": value["thumb"], "author": str(value.get("author", {}).get("name", ""))[:128] if isinstance(value.get("author"), dict) else ""})
+    return {"images": result}
+
+
+def allowed_url(url):
+    if not isinstance(url, str) or len(url) > 8192: return False
+    try:
+        parts = urlsplit(url)
+        return (parts.scheme == "https" and parts.hostname is not None and
+                (parts.hostname == "steamgriddb.com" or parts.hostname.endswith(".steamgriddb.com"))
+                and parts.port in (None, 443) and not parts.username and not parts.password)
+    except ValueError:
+        return False
+
+
+def download_image(paths, url):
+    if not allowed_url(url):
+        raise BackendError("Artwork downloads must use HTTPS on SteamGridDB.")
+    mapping = paths.data / "artwork-downloads" / (hashlib.sha256(url.encode()).hexdigest() + ".json")
+    try:
+        if mapping.parent.is_symlink(): raise BackendError("Unsafe artwork download cache.")
+        descriptor = os.open(mapping, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > 4096: raise ValueError("Invalid artwork cache entry")
+            cached = json.loads(stream.read(4097))
+        if isinstance(cached, dict) and cached.get("url") == url and cached.get("path"):
+            return {"path": managed_image(paths, cached.get("path"))}
+    except (OSError, ValueError, BackendError):
+        pass
+    # API credentials are never sent to an image/CDN endpoint.
+    path = cache_bytes(paths, request_bytes(url, MAX_IMAGE))
+    if mapping.parent.is_symlink():
+        raise BackendError("Artwork download cache must not be a symbolic link.")
+    atomic_write(mapping, json.dumps({"url": url, "path": path}))
+    return {"path": path}
 
 
 def import_image(paths, filename):

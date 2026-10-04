@@ -8,7 +8,7 @@ from uuid import uuid4
 from .common import BackendError, Paths, default_shared_prefix, expand_path
 from .steam import DEFAULT_PROTON
 from .lossless import default_options as default_lossless_options, validate_options as validate_lossless_options
-from .artwork import validate_artwork
+from .artwork import api_key, validate_artwork
 
 
 ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -215,6 +215,7 @@ class Store:
             "prefix_root": str(self.paths.default_prefix_root),
             "default_proton": DEFAULT_PROTON,
             "close_after_launch": False,
+            "steamgriddb_api_key": "",
             "new_game_defaults": default_game_options(),
         }
         for key, value in self.connection.execute("SELECT key, value FROM settings"):
@@ -237,6 +238,8 @@ class Store:
             raise BackendError("Unknown setting.")
         if "close_after_launch" in values and type(values["close_after_launch"]) is not bool:
             raise BackendError("Close after launch must be true or false.")
+        if "steamgriddb_api_key" in values:
+            values["steamgriddb_api_key"] = api_key(values["steamgriddb_api_key"])
         for key in ("prefix_root", "default_proton"):
             if key in values:
                 values[key] = text(values[key], key, required=True)

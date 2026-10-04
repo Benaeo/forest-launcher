@@ -16,7 +16,6 @@
 #include <QVBoxLayout>
 #include <QTimer>
 #include <QShowEvent>
-#include <QSignalBlocker>
 #include <QStyle>
 
 GameDialog::GameDialog(const QJsonObject &game, const QJsonObject &bootstrap, QWidget *parent)
@@ -67,7 +66,7 @@ GameDialog::GameDialog(const QJsonObject &game, const QJsonObject &bootstrap, QW
         setIconBusy(false);
         m_iconDebounce->start();
     });
-    connect(m_icon, &QPushButton::clicked, this, [this] { chooseArtwork(); });
+    connect(m_icon, &QPushButton::clicked, this, &GameDialog::chooseIconSource);
     m_error = new QLabel(this);
     m_error->setTextFormat(Qt::PlainText);
     m_error->setWordWrap(true);
@@ -156,6 +155,13 @@ void GameDialog::extractInitialIcon() {
         || !QFileInfo(path).isFile() || frontend.value("backend").toString().isEmpty()
         || m_extractionAttempted.contains(path)) return;
     m_extractionAttempted.insert(path);
+    extractIcon();
+}
+
+void GameDialog::extractIcon() {
+    const auto path = m_path->text().trimmed();
+    const auto frontend = m_bootstrap.value("frontend").toObject();
+    if (!QFileInfo(path).isFile()) { extractionFailed("Choose an existing executable to extract its icon."); return; }
     const int revision = m_iconRevision;
     if (m_iconBackend) delete m_iconBackend;
     m_iconBackend = new BackendClient(frontend.value("backend").toString(), frontend.value("data_root").toString(), this);
@@ -175,24 +181,61 @@ void GameDialog::extractInitialIcon() {
 void GameDialog::extractionFailed(const QString &error) {
     setIconBusy(false);
     if (!isVisible()) return;
-    ArtworkQuestion prompt("Icon extraction failed", "Icon extraction failed. Want to choose a local image?\n\n" + error, this);
+    ArtworkQuestion prompt("Icon extraction failed", "Icon extraction failed. Want to proceed with SteamGridDB?\n\n" + error, this);
     prompt.setObjectName("iconExtractionFailedDialog");
-    if (prompt.exec() == QDialog::Accepted) chooseArtwork();
+    if (prompt.exec() != QDialog::Accepted) return;
+    const auto key = m_bootstrap.value("settings").toObject().value("steamgriddb_api_key").toString();
+    if (!key.isEmpty()) { chooseArtwork(true); return; }
+    ArtworkKeyDialog keyPrompt(this);
+    if (keyPrompt.exec() != QDialog::Accepted) return;
+    setIconBusy(true);
+    m_iconBackend->request("save_settings", {{"settings", QJsonObject{{"steamgriddb_api_key", keyPrompt.key->text().trimmed()}}}},
+        [this](const QJsonObject &data) {
+            m_bootstrap.insert("settings", data.value("settings"));
+            setIconBusy(false);
+            if (isVisible()) chooseArtwork(true);
+        }, [this](const QString &failure) { setIconBusy(false); m_error->setText(failure); m_error->show(); });
 }
 
-void GameDialog::chooseArtwork(bool startSearch, bool steamRequested) {
+void GameDialog::chooseIconSource() {
     m_iconDebounce->stop();
     m_extractionAttempted.insert(m_path->text().trimmed());
     ++m_iconRevision;
     if (m_iconBackend) { m_iconBackend->deleteLater(); m_iconBackend = nullptr; }
     setIconBusy(false);
-    ArtworkDialog dialog(m_bootstrap, m_title->text(), m_artwork, this);
-    (void)startSearch;
+    IconSourceDialog prompt(this);
+    const int choice = prompt.exec();
+    if (choice == IconSourceDialog::Extracted) {
+        extractIcon();
+    } else if (choice == IconSourceDialog::File) {
+        const auto path = QFileDialog::getOpenFileName(this, "Choose icon", {}, "Images (*.png *.jpg *.jpeg *.webp *.ico);;All files (*)");
+        if (path.isEmpty()) return;
+        const auto frontend = m_bootstrap.value("frontend").toObject();
+        m_iconBackend = new BackendClient(frontend.value("backend").toString(), frontend.value("data_root").toString(), this);
+        setIconBusy(true);
+        importArtworkImage(m_iconBackend, path, [this](const QJsonObject &data) {
+            m_artwork.insert("icon", data.value("path"));
+            setIconBusy(false);
+            updateIcon();
+        }, [this](const QString &error) { setIconBusy(false); m_error->setText(error); m_error->show(); });
+    } else if (choice == IconSourceDialog::SteamGridDB) {
+        chooseArtwork(true);
+    }
+}
+
+bool GameDialog::chooseArtwork(bool startSearch, bool steamRequested) {
+    m_iconDebounce->stop();
+    m_extractionAttempted.insert(m_path->text().trimmed());
+    ++m_iconRevision;
+    if (m_iconBackend) { m_iconBackend->deleteLater(); m_iconBackend = nullptr; }
+    setIconBusy(false);
+    ArtworkDialog dialog(m_bootstrap, m_title->text(), m_artwork, isVisible() ? this : parentWidget(), steamRequested);
+    if (startSearch) dialog.startSearch();
     const bool accepted = dialog.exec() == QDialog::Accepted;
     m_bootstrap.insert("settings", dialog.settingsData());
     if (accepted) {
         m_artwork = dialog.artworkData();
         updateIcon();
     }
-    (void)steamRequested;
+    return accepted;
 }

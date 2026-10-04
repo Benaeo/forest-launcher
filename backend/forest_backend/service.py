@@ -64,6 +64,12 @@ class Service:
             return {"path": artwork.cache_bytes(self.paths, extract_icon(params.get("path")))}
         if action == "import_artwork":
             return artwork.import_image(self.paths, params.get("path"))
+        if action == "artwork_download":
+            return artwork.download_image(self.paths, params.get("url"))
+        if action == "artwork_search":
+            return artwork.search_games(self.store.get_settings()["steamgriddb_api_key"], params.get("query"), params.get("expanded", False))
+        if action == "artwork_images":
+            return artwork.images(self.store.get_settings()["steamgriddb_api_key"], params.get("game_id"), params.get("kind"), params.get("page", 0))
         if action == "discover_lossless_scaling":
             if not lsfg_installed():
                 raise BackendError(MISSING_PACKAGE, "missing_lsfg_vk")

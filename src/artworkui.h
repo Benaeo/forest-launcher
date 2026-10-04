@@ -73,3 +73,59 @@ public:
     }
 };
 
+class IconSourceDialog : public QDialog {
+public:
+    enum Choice { Extracted = 10, File = 11, SteamGridDB = 12 };
+    explicit IconSourceDialog(QWidget *parent = nullptr) : QDialog(parent) {
+        setObjectName("iconSourceDialog");
+        setWindowTitle("Choose an icon source");
+        setMinimumWidth(400);
+        auto *layout = new QVBoxLayout(this);
+        for (const auto &entry : {std::pair<QString, int>{"Use extracted icon", Extracted},
+                                 {"Use icon from file", File}, {"Use icon from SteamGridDB", SteamGridDB}}) {
+            auto *button = new QPushButton(entry.first, this);
+            button->setObjectName(entry.second == Extracted ? "useExtractedIcon" : entry.second == File ? "useIconFile" : "useSteamGridDbIcon");
+            button->setMinimumHeight(40);
+            layout->addWidget(button);
+            connect(button, &QPushButton::clicked, this, [this, value = entry.second] { done(value); });
+        }
+        auto *cancel = new QPushButton("Cancel", this);
+        cancel->setMinimumHeight(34);
+        layout->addWidget(cancel);
+        connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
+    }
+};
+
+class ArtworkKeyDialog : public QDialog {
+public:
+    QLineEdit *key;
+    explicit ArtworkKeyDialog(QWidget *parent = nullptr) : QDialog(parent) {
+        setObjectName("steamGridDbKeyDialog");
+        setWindowTitle("SteamGridDB API key");
+        setMinimumWidth(460);
+        auto *layout = new QVBoxLayout(this);
+        auto *message = new QLabel("Enter your SteamGridDB API key to browse artwork.\nSaved in Forest’s private settings; it is not encrypted.", this);
+        message->setWordWrap(true);
+        layout->addWidget(message);
+        auto *link = new QLabel("<a href=\"https://www.steamgriddb.com/profile/preferences/api\">Get your API key</a>", this);
+        link->setOpenExternalLinks(true);
+        layout->addWidget(link);
+        key = new QLineEdit(this);
+        key->setObjectName("steamGridDbKeyInput");
+        key->setEchoMode(QLineEdit::Password);
+        layout->addWidget(key);
+        auto *show = new QCheckBox("Show key", this);
+        connect(show, &QCheckBox::toggled, this, [this](bool visible) { key->setEchoMode(visible ? QLineEdit::Normal : QLineEdit::Password); });
+        layout->addWidget(show);
+        auto *buttons = new WideDialogButtons(this);
+        buttons->button(QDialogButtonBox::Close)->setText("Cancel");
+        buttons->button(QDialogButtonBox::Save)->setText("Continue");
+        buttons->button(QDialogButtonBox::Save)->setEnabled(false);
+        connect(key, &QLineEdit::textChanged, this, [buttons](const QString &text) {
+            buttons->button(QDialogButtonBox::Save)->setEnabled(!text.trimmed().isEmpty());
+        });
+        connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+        layout->addWidget(buttons);
+    }
+};
