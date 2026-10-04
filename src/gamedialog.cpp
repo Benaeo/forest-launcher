@@ -124,12 +124,29 @@ void GameDialog::validateAndAccept() {
         if (!QRegularExpression("^[0-9]+$").match(m_path->text().trimmed()).hasMatch()
             || m_path->text().trimmed().toULongLong() == 0) error = "Enter a positive Steam App ID.";
     } else if (!QFileInfo(m_path->text().trimmed()).isFile()) error = "Choose an existing game executable.";
+    if (error.isEmpty() && m_options->optionsData().value("steam_shortcut").toBool()
+        && m_options->optionsData().value("steam_accounts").toArray().isEmpty()) error = "Choose at least one Steam account from Accounts.";
     if (!error.isEmpty()) {
         m_error->setText(error);
         m_error->setVisible(true);
         return;
     }
     accept();
+}
+
+int GameDialog::exec() {
+    // Finish the editor modal loop BEFORE opening first-time artwork setup.
+    // Never hide/re-show a dialog inside its still-running exec() loop.
+    for (;;) {
+        const int result = QDialog::exec();
+        if (result != QDialog::Accepted) return result;
+        bool complete = true;
+        for (const auto &kind : {"icon", "grid", "hero", "logo"})
+            complete = complete && !m_artwork.value(kind).toString().isEmpty();
+        if (!m_options->optionsData().value("steam_shortcut").toBool() || complete) return result;
+        if (chooseArtwork(false, true)) return QDialog::Accepted;
+        // Nothing has been persisted. Reopen the same editor with its draft intact.
+    }
 }
 
 void GameDialog::showEvent(QShowEvent *event) {
@@ -201,6 +218,7 @@ void GameDialog::extractionFailed(const QString &error) {
 }
 
 void GameDialog::chooseIconSource() {
+    if (m_options->optionsData().value("steam_shortcut").toBool()) { chooseArtwork(false, true); return; }
     m_iconDebounce->stop();
     m_extractionAttempted.insert(m_path->text().trimmed());
     ++m_iconRevision;

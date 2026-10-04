@@ -24,10 +24,12 @@
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QGridLayout>
+#include <QMenu>
+#include <QToolButton>
 
 GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObject &bootstrap, QWidget *parent,
                                      bool defaultsEditor)
-    : QWidget(parent) {
+    : QWidget(parent), m_defaultsEditor(defaultsEditor) {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     auto *tabs = defaultsEditor ? nullptr : new QTabWidget(this);
@@ -104,10 +106,39 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     m_appMenuShortcut->setObjectName("appMenuShortcutCheck");
     m_appMenuShortcut->setChecked(options.value("app_menu_shortcut").toBool());
     m_appMenuShortcut->setToolTip("Create a Forest shortcut in your application menu when this game is saved.");
-    auto *steamShortcut = new QCheckBox("Steam (later)", this);
+    m_steamShortcut = new QCheckBox(defaultsEditor ? "Steam (per game)" : "Steam", this);
+    auto *steamShortcut = m_steamShortcut;
     steamShortcut->setObjectName("steamShortcutCheck");
-    steamShortcut->setEnabled(false);
-    steamShortcut->setToolTip("Steam shortcut integration is deferred until icon and banner support is added.");
+    steamShortcut->setChecked(options.value("steam_shortcut").toBool());
+    steamShortcut->setToolTip("Write a Forest shortcut and selected artwork for the checked accounts. Restart Steam to refresh its library; Forest never stops Steam.");
+    m_steamAccountsButton = new QToolButton(this);
+    m_steamAccountsButton->setObjectName("steamAccountsButton");
+    m_steamAccountsButton->setText("Accounts");
+    m_steamAccountsButton->setPopupMode(QToolButton::InstantPopup);
+    auto *accountMenu = new QMenu(m_steamAccountsButton);
+    m_steamAccountsButton->setMenu(accountMenu);
+    const auto selectedAccounts = options.value("steam_accounts").toArray();
+    for (const auto &value : bootstrap.value("steam_accounts").toArray()) {
+        const auto account = value.toObject();
+        auto *action = accountMenu->addAction(account.value("name").toString() + " (" + account.value("id").toString() + ")");
+        action->setCheckable(true);
+        action->setData(account.value("id").toString());
+        action->setChecked(selectedAccounts.contains(account.value("id")));
+    }
+    m_hasSteamAccounts = !accountMenu->actions().isEmpty();
+    for (const auto &identity : selectedAccounts) {
+        bool found = false;
+        for (auto *action : accountMenu->actions()) found |= action->data().toString() == identity.toString();
+        if (!found) {
+            auto *action = accountMenu->addAction("Unavailable account (" + identity.toString() + ")");
+            action->setCheckable(true); action->setChecked(true); action->setData(identity.toString());
+        }
+    }
+    steamShortcut->setEnabled(!defaultsEditor && m_hasSteamAccounts && kind() != "steam");
+    if (defaultsEditor || !m_hasSteamAccounts) steamShortcut->setToolTip(defaultsEditor ? "Select Steam accounts in each game’s Add/Edit dialog." : "No local native Steam accounts were found. Sign in to Steam first.");
+    m_steamAccountsButton->setVisible(!defaultsEditor);
+    connect(steamShortcut, &QCheckBox::toggled, this, [this](bool checked) { m_steamAccountsButton->setEnabled(checked && !m_defaultsEditor); });
+    m_steamAccountsButton->setEnabled(steamShortcut->isChecked() && !defaultsEditor);
     QGroupBox *generalOptions = nullptr;
     QHBoxLayout *tools = nullptr;
     if (defaultsEditor) {
@@ -232,6 +263,7 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
         shortcuts->addWidget(m_desktopShortcut);
         shortcuts->addWidget(m_appMenuShortcut);
         shortcuts->addWidget(steamShortcut);
+        shortcuts->addWidget(m_steamAccountsButton);
         shortcuts->addStretch();
         m_launchTail->addWidget(new QLabel("Shortcuts", tail), 2, 0);
         m_launchTail->addLayout(shortcuts, 2, 1);
@@ -359,6 +391,9 @@ void GameOptionsWidget::updateKind() {
     m_mangohud->setEnabled(kind() != "steam");
     m_preferSdl->setEnabled(windows);
     m_noSleep->setEnabled(kind() != "steam");
+    m_steamShortcut->setEnabled(!m_defaultsEditor && m_hasSteamAccounts && kind() != "steam");
+    if (kind() == "steam") m_steamShortcut->setChecked(false);
+    m_steamAccountsButton->setEnabled(m_steamShortcut->isChecked() && !m_defaultsEditor);
     m_losslessButton->setEnabled(m_lsfgInstalled && kind() != "steam");
     m_losslessButton->setToolTip(!m_lsfgInstalled
         ? "Install the missing package lsfg-vk to use this feature."
@@ -392,6 +427,13 @@ QJsonObject GameOptionsWidget::optionsData() const {
         {"app_menu_shortcut", m_appMenuShortcut->isChecked()},
         {"environment", m_environment->isEnabled() ? m_environment->toPlainText() : QString()},
     };
+    if (!m_defaultsEditor) {
+        result.insert("steam_shortcut", m_steamShortcut->isChecked() && kind() != "steam");
+        QJsonArray accounts;
+        for (auto *action : m_steamAccountsButton->menu()->actions())
+            if (action->isChecked()) accounts.append(action->data().toString());
+        result.insert("steam_accounts", accounts);
+    }
     if (!m_losslessOptions.isEmpty()) {
         auto lossless = m_losslessOptions;
         if (kind() == "steam") lossless.insert("multiplier", 1);

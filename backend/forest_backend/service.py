@@ -11,6 +11,7 @@ from .storage import Store
 from .shortcuts import Shortcuts
 from . import artwork
 from .icons import extract_icon
+from .steamshortcuts import accounts as steam_accounts, sync as sync_steam_shortcuts
 from .proton import list_releases, download_version, download_latest, cleanup_downloads, install_root
 from .umu import UMUManager
 from .lossless import installed as lsfg_installed, discover_dll, MISSING_PACKAGE
@@ -53,6 +54,7 @@ class Service:
             umu = UMUManager(self.paths).status()
             return {
                 "games": self.store.list_games(), "settings": settings,
+                "steam_accounts": steam_accounts(self.paths),
                 "running": running_games(self.paths),
                 "protons": discover_protons(native_steam_root(), directory=install_root(self.paths)),
                 "capabilities": {"umu": umu["path"], "steam": shutil.which("steam") or "",
@@ -91,7 +93,8 @@ class Service:
             game = self.store.save_game(params.get("game"))
             try:
                 files = Shortcuts(self.paths, game["id"]).sync(game, params.get("shortcut_context"))
-                return {"game": game, "shortcuts": files}
+                notice = sync_steam_shortcuts(self.paths, game, params.get("shortcut_context"))
+                return {"game": game, "shortcuts": files, "notice": notice}
             except (BackendError, OSError) as error:
                 return {"game": game, "warning": f"Game saved, but shortcuts could not be updated: {error}"}
         if action == "running_games":
@@ -121,6 +124,7 @@ class Service:
                 if not isinstance(expected, dict) or any(expected.get(key) != info.get(key) for key in ("prefix", "device", "inode")):
                     raise BackendError("The prefix changed since confirmation. Reopen the removal dialog.", "prefix_changed")
             try:
+                sync_steam_shortcuts(self.paths, game, remove=True)
                 Shortcuts(self.paths, game_id).remove()
             except (BackendError, OSError) as error:
                 raise BackendError(f"Could not remove shortcuts; the library entry was kept: {error}", "shortcut_error")

@@ -9,6 +9,7 @@ from .common import BackendError, Paths, default_shared_prefix, expand_path
 from .steam import DEFAULT_PROTON
 from .lossless import default_options as default_lossless_options, validate_options as validate_lossless_options
 from .artwork import api_key, validate_artwork
+from .steamshortcuts import selected_accounts
 
 
 ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -189,6 +190,16 @@ class Store:
             game["artwork"] = validate_artwork(value["artwork"], self.paths)
         elif not creating and "artwork" in previous:
             game["artwork"] = previous["artwork"]
+        if "steam_shortcut" in value or (not creating and "steam_shortcut" in previous):
+            selected = value.get("steam_shortcut", previous.get("steam_shortcut", False) if not creating else False)
+            if type(selected) is not bool:
+                raise BackendError("Steam shortcut must be true or false.")
+            game["steam_shortcut"] = selected
+            game["steam_accounts"] = selected_accounts(value.get("steam_accounts", previous.get("steam_accounts", []) if not creating else []))
+            if selected and not game["steam_accounts"]:
+                raise BackendError("Select at least one Steam account for the shortcut.")
+            if selected and game["kind"] == "steam":
+                raise BackendError("Steam library games do not need an additional Steam shortcut.")
         document = json.dumps(game, ensure_ascii=False)
         with self.connection:
             if not creating:

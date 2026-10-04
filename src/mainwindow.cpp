@@ -354,6 +354,7 @@ void MainWindow::editGame(const QJsonObject &game) {
     m_backend->request("save_game", {{"game", updated}, {"shortcut_context", m_shortcutContext}}, [this](const QJsonObject &data) {
         refresh(data.value("game").toObject().value("id").toString());
         if (!data.value("warning").toString().isEmpty()) showError(data.value("warning").toString());
+        else if (!data.value("notice").toString().isEmpty()) QMessageBox::information(this, "Steam shortcuts", data.value("notice").toString());
     }, [this, updated](const QString &error) {
         setBusy(false);
         showError(error);
@@ -374,6 +375,7 @@ void MainWindow::addExecutable(const QString &path) {
     m_backend->request("save_game", {{"game", game}, {"shortcut_context", m_shortcutContext}}, [this](const QJsonObject &data) {
         refresh(data.value("game").toObject().value("id").toString());
         if (!data.value("warning").toString().isEmpty()) showError(data.value("warning").toString());
+        else if (!data.value("notice").toString().isEmpty()) QMessageBox::information(this, "Steam shortcuts", data.value("notice").toString());
     }, [this, game](const QString &error) { setBusy(false); showError(error); editGame(game); });
 }
 

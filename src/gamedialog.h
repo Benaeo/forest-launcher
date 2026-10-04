@@ -16,6 +16,7 @@ class GameDialog : public QDialog {
 public:
     GameDialog(const QJsonObject &game, const QJsonObject &bootstrap, QWidget *parent = nullptr);
     QJsonObject gameData() const;
+    int exec() override;
     void setExecutablePath(const QString &path);
 protected:
     void showEvent(QShowEvent *event) override;

@@ -12,6 +12,7 @@ class QVBoxLayout;
 class QProgressBar;
 class QLabel;
 class QGridLayout;
+class QToolButton;
 class BackendClient;
 
 class GameOptionsWidget : public QWidget {
@@ -25,6 +26,7 @@ public:
     void setKind(const QString &kind);
     void addGeneralOption(QWidget *option);
     void addIconControl(QWidget *control);
+    QCheckBox *steamShortcutCheck() const { return m_steamShortcut; }
 private:
     void updateKind();
     void updateLatestButton();
@@ -54,7 +56,11 @@ private:
     QCheckBox *m_noSleep;
     QCheckBox *m_desktopShortcut;
     QCheckBox *m_appMenuShortcut;
+    QCheckBox *m_steamShortcut;
+    QToolButton *m_steamAccountsButton;
+    QGridLayout *m_launchTail = nullptr;
+    bool m_defaultsEditor = false;
+    bool m_hasSteamAccounts = false;
     QPlainTextEdit *m_environment;
     QVBoxLayout *m_generalOptions = nullptr;
-    QGridLayout *m_launchTail = nullptr;
 };
