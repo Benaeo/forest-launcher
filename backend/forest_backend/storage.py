@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from .common import BackendError, Paths, default_shared_prefix, expand_path
 from .steam import DEFAULT_PROTON
+from .lossless import default_options as default_lossless_options, validate_options as validate_lossless_options
 
 
 ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -53,6 +54,7 @@ def parse_environment(value) -> dict[str, str]:
 def default_game_options() -> dict:
     return {"kind": "windows", "prefix": str(default_shared_prefix()), "proton": "default",
             "arguments": "", "environment": {}, "tags": [],
+            "lossless_scaling": default_lossless_options(),
             **dict.fromkeys((*LAUNCH_TOGGLES, *SHORTCUT_TOGGLES), False)}
 
 
@@ -65,6 +67,7 @@ def validate_game_options(value: dict) -> dict:
         "proton": text(value.get("proton", "default"), "Proton build"),
         "arguments": text(value.get("arguments", ""), "Arguments", limit=32768),
         "environment": parse_environment(value.get("environment", {})),
+        "lossless_scaling": validate_lossless_options(value.get("lossless_scaling", {})),
     }
     for key in (*LAUNCH_TOGGLES, *SHORTCUT_TOGGLES):
         selected = value.get(key, False)
@@ -90,6 +93,7 @@ def validate_game_options(value: dict) -> dict:
     if options["kind"] == "steam":
         options["environment"] = {}
         options.update(dict.fromkeys(LAUNCH_TOGGLES, False))
+        options["lossless_scaling"]["multiplier"] = 1
     return options
 
 
@@ -175,6 +179,8 @@ class Store:
         else:
             previous = self.get_game(game_id)
             game = validate_game(value)
+            if "lossless_scaling" not in value and "lossless_scaling" not in previous:
+                game.pop("lossless_scaling")
             if game["kind"] == "windows" and not game["prefix"] and (previous["prefix"] or previous["kind"] != "windows"):
                 # Clearing an explicit prefix resets it; untouched legacy blanks stay legacy.
                 game["prefix"] = self.get_settings()["new_game_defaults"]["prefix"] or str(default_shared_prefix())
@@ -233,7 +239,11 @@ class Store:
             options = values["new_game_defaults"]
             if not isinstance(options, dict) or set(options) - set(default_game_options()):
                 raise BackendError("New game defaults must contain only supported game options.")
-            options = validate_game_options({**settings["new_game_defaults"], **options})
+            combined = {**settings["new_game_defaults"], **options}
+            if isinstance(options.get("lossless_scaling"), dict):
+                combined["lossless_scaling"] = {**settings["new_game_defaults"]["lossless_scaling"],
+                                                **options["lossless_scaling"]}
+            options = validate_game_options(combined)
             if options["proton"] not in ("", "default"):
                 if "default_proton" in values and values["default_proton"] != options["proton"]:
                     raise BackendError("Default Proton selections must agree.")

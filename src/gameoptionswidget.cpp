@@ -2,6 +2,7 @@
 #include "protonmanager.h"
 #include "backendclient.h"
 #include "elidingcombobox.h"
+#include "losslessdialog.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -157,6 +158,16 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     m_managerButton = new QPushButton("Proton Manager", this);
     m_managerButton->setObjectName("protonManagerButton");
     form->addRow(QString(), m_managerButton);
+    m_losslessOptions = options.value("lossless_scaling").toObject();
+    m_lsfgInstalled = bootstrap.value("capabilities").toObject().value("lsfg_vk").toBool();
+    m_losslessButton = new QPushButton("Lossless Scaling", this);
+    m_losslessButton->setObjectName("losslessScalingButton");
+    m_losslessButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    form->addRow("lsfg-vk", m_losslessButton);
+    connect(m_losslessButton, &QPushButton::clicked, this, [this, frontend] {
+        LosslessDialog dialog(m_losslessOptions, frontend, this);
+        if (dialog.exec() == QDialog::Accepted) m_losslessOptions = dialog.optionsData();
+    });
     connect(m_downloadLatest, &QPushButton::clicked, this, [this, frontend] {
         if (m_latestDownloading) return;
         const auto family = m_proton->currentIndex() == 0 ? "cachyos" : "ge";
@@ -336,6 +347,11 @@ void GameOptionsWidget::updateKind() {
     m_mangohud->setEnabled(kind() != "steam");
     m_preferSdl->setEnabled(windows);
     m_noSleep->setEnabled(kind() != "steam");
+    m_losslessButton->setEnabled(m_lsfgInstalled && kind() != "steam");
+    m_losslessButton->setToolTip(!m_lsfgInstalled
+        ? "Install the missing package lsfg-vk to use this feature."
+        : kind() == "steam" ? "Lossless Scaling cannot be configured for Steam library launch requests. Configure it in Steam instead."
+                           : "Configure Lossless Scaling for a Vulkan-rendered game. Multiplier 1 = off; 2 or more = on.");
     if (!windows) m_preferSdl->setChecked(false);
     if (kind() == "steam") {
         m_mangohud->setChecked(false);
@@ -352,7 +368,7 @@ QJsonObject GameOptionsWidget::optionsData() const {
         if (!value.isEmpty() && value != "online-fix" && !tags.contains(value)) tags.append(value);
     }
     if (m_onlineFix->isEnabled() && m_onlineFix->isChecked()) tags.append("online-fix");
-    return {
+    QJsonObject result{
         {"kind", kind()},
         {"prefix", kind() == "windows" ? m_prefix->text().trimmed() : QString()},
         {"proton", kind() == "windows" ? protonSelection() : "default"},
@@ -364,4 +380,10 @@ QJsonObject GameOptionsWidget::optionsData() const {
         {"app_menu_shortcut", m_appMenuShortcut->isChecked()},
         {"environment", m_environment->isEnabled() ? m_environment->toPlainText() : QString()},
     };
+    if (!m_losslessOptions.isEmpty()) {
+        auto lossless = m_losslessOptions;
+        if (kind() == "steam") lossless.insert("multiplier", 1);
+        result.insert("lossless_scaling", lossless);
+    }
+    return result;
 }

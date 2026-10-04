@@ -11,6 +11,7 @@ from .storage import Store
 from .shortcuts import Shortcuts
 from .proton import list_releases, download_version, download_latest, cleanup_downloads, install_root
 from .umu import UMUManager
+from .lossless import installed as lsfg_installed, discover_dll, MISSING_PACKAGE
 
 
 PROTOCOL_VERSION = 1
@@ -52,10 +53,15 @@ class Service:
                 "games": self.store.list_games(), "settings": settings,
                 "running": running_games(self.paths),
                 "protons": discover_protons(native_steam_root(), directory=install_root(self.paths)),
-                "capabilities": {"umu": umu["path"], "steam": shutil.which("steam") or ""},
+                "capabilities": {"umu": umu["path"], "steam": shutil.which("steam") or "",
+                                 "lsfg_vk": lsfg_installed()},
                 "umu": umu,
                 "paths": {"data": str(self.paths.data), "state": str(self.paths.state)},
             }
+        if action == "discover_lossless_scaling":
+            if not lsfg_installed():
+                raise BackendError(MISSING_PACKAGE, "missing_lsfg_vk")
+            return discover_dll()
         if action == "proton_releases":
             return list_releases(self.paths, params.get("family"), params.get("page", 1))
         if action == "download_latest_proton":

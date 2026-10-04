@@ -7,6 +7,7 @@ import subprocess
 
 from .common import BackendError, Paths, expand_path
 from .onlinefix import resolve_fake_app_id
+from .lossless import launch_environment as lossless_environment
 from .processes import MARKER, prepare_tracking, finish_tracking
 from .steam import discover_installed_protons, discover_protons, ensure_native_steam, native_steam_root, runtime_command, steam_libraries
 from .umu import ensure_umu, find_umu
@@ -96,6 +97,7 @@ class LaunchPlan:
 
 
 def build_plan(game: dict, settings: dict, paths: Paths, *, prepare_components=False) -> LaunchPlan:
+    lossless = lossless_environment(game)
     inhibitor = None
     if game["kind"] != "steam" and game.get("no_sleep", False):
         inhibitor = shutil.which("systemd-inhibit")
@@ -103,6 +105,7 @@ def build_plan(game: dict, settings: dict, paths: Paths, *, prepare_components=F
             raise BackendError("No sleep requires systemd-inhibit. Install systemd or turn off No sleep.",
                                "missing_inhibitor")
     plan = base_plan(game, settings, paths, prepare_components=prepare_components)
+    plan.environment.update(lossless)
     if game["kind"] != "steam":
         if game.get("mangohud", False):
             plan.environment["MANGOHUD"] = "1"

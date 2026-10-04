@@ -34,6 +34,9 @@ private:
     QComboBox *m_proton;
     QPushButton *m_downloadLatest;
     QPushButton *m_managerButton;
+    QPushButton *m_losslessButton;
+    QJsonObject m_losslessOptions;
+    bool m_lsfgInstalled = false;
     QWidget *m_latestProgressRow;
     QProgressBar *m_latestProgress;
     QLabel *m_latestStatus;
