@@ -3,6 +3,7 @@
 #include "gamedialog.h"
 #include "settingsdialog.h"
 #include "removegamedialog.h"
+#include "helpdialogs.h"
 
 #include <QAction>
 #include <QApplication>
@@ -40,6 +41,7 @@
 #include <QStyle>
 #include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <utility>
@@ -106,6 +108,30 @@ MainWindow::MainWindow(QString backendDirectory, QString dataRoot, bool smokeTes
     toolbar->addAction(m_editAction);
     toolbar->addSeparator();
     toolbar->addAction(m_settingsAction);
+    auto *help = new QToolButton(toolbar);
+    help->setObjectName("helpButton");
+    help->setText("Help");
+    help->setIcon(icon("help-contents", QStyle::SP_DialogHelpButton));
+    help->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    help->setPopupMode(QToolButton::InstantPopup);
+    auto *helpMenu = new QMenu(help);
+    helpMenu->setObjectName("helpMenu");
+    auto *report = helpMenu->addAction("Report a bug or suggest a feature");
+    report->setObjectName("reportIssueAction");
+    connect(report, &QAction::triggered, this, [] {
+        QDesktopServices::openUrl(QUrl("https://github.com/Benaeo/forest-launcher/issues"));
+    });
+    auto *news = helpMenu->addAction("News");
+    news->setObjectName("newsAction");
+    connect(news, &QAction::triggered, this, [this] { NewsDialog dialog(this); dialog.exec(); });
+    auto *about = helpMenu->addAction("About");
+    about->setObjectName("aboutAction");
+    connect(about, &QAction::triggered, this, [this] {
+        AboutDialog dialog(m_shortcutContext.value("backend").toString(), this);
+        dialog.exec();
+    });
+    help->setMenu(helpMenu);
+    toolbar->addWidget(help);
 
     auto *splitter = new QSplitter(this);
     auto *sidebar = new QWidget(splitter);

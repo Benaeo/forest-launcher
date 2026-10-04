@@ -28,3 +28,4 @@ install(TARGETS forest-launcher RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(DIRECTORY backend/forest_backend DESTINATION "${CMAKE_INSTALL_DATADIR}/forest-launcher/backend"
     FILES_MATCHING PATTERN "*.py")
 install(FILES data/io.github.Benaeo.forest-launcher.desktop DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+install(FILES LICENSE DESTINATION "${CMAKE_INSTALL_DATADIR}/forest-launcher")
