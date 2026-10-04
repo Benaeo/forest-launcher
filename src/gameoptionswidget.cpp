@@ -26,6 +26,41 @@
 #include <QGridLayout>
 #include <QMenu>
 #include <QToolButton>
+#include <QMouseEvent>
+#include <QKeyEvent>
+
+namespace {
+// Account selection is multi-select: activating a checkable row must not
+// dismiss the popup. Keep normal QMenu handling for dismissal and navigation.
+class SteamAccountsMenu final : public QMenu {
+public:
+    using QMenu::QMenu;
+protected:
+    void mouseReleaseEvent(QMouseEvent *event) override {
+        auto *action = actionAt(event->position().toPoint());
+        if (event->button() == Qt::LeftButton && canToggle(action)) {
+            action->trigger();
+            event->accept();
+            return;
+        }
+        QMenu::mouseReleaseEvent(event);
+    }
+    void keyPressEvent(QKeyEvent *event) override {
+        auto *action = activeAction();
+        if ((event->key() == Qt::Key_Space || event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)
+            && canToggle(action)) {
+            if (!event->isAutoRepeat()) action->trigger();
+            event->accept();
+            return;
+        }
+        QMenu::keyPressEvent(event);
+    }
+private:
+    static bool canToggle(const QAction *action) {
+        return action && action->isEnabled() && action->isCheckable() && !action->isSeparator();
+    }
+};
+}
 
 GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObject &bootstrap, QWidget *parent,
                                      bool defaultsEditor)
@@ -115,7 +150,7 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     m_steamAccountsButton->setObjectName("steamAccountsButton");
     m_steamAccountsButton->setText("Accounts");
     m_steamAccountsButton->setPopupMode(QToolButton::InstantPopup);
-    auto *accountMenu = new QMenu(m_steamAccountsButton);
+    auto *accountMenu = new SteamAccountsMenu(m_steamAccountsButton);
     m_steamAccountsButton->setMenu(accountMenu);
     const auto selectedAccounts = options.value("steam_accounts").toArray();
     for (const auto &value : bootstrap.value("steam_accounts").toArray()) {
