@@ -23,6 +23,7 @@
 #include <QSet>
 #include <QTabWidget>
 #include <QVBoxLayout>
+#include <QGridLayout>
 
 GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObject &bootstrap, QWidget *parent,
                                      bool defaultsEditor)
@@ -220,14 +221,21 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     form->addRow("Arguments", m_arguments);
     form->addRow("Tags", m_tags);
     if (!defaultsEditor) {
-        form->addRow(QString(), m_onlineFix);
-        form->addRow("Tools", tools);
+        auto *tail = new QWidget(this);
+        m_launchTail = new QGridLayout(tail);
+        m_launchTail->setContentsMargins(0, 0, 0, 0);
+        m_launchTail->setColumnStretch(1, 1);
+        m_launchTail->addWidget(m_onlineFix, 0, 1);
+        m_launchTail->addWidget(new QLabel("Tools", tail), 1, 0);
+        m_launchTail->addLayout(tools, 1, 1);
         auto *shortcuts = new QHBoxLayout;
         shortcuts->addWidget(m_desktopShortcut);
         shortcuts->addWidget(m_appMenuShortcut);
         shortcuts->addWidget(steamShortcut);
         shortcuts->addStretch();
-        form->addRow("Shortcuts", shortcuts);
+        m_launchTail->addWidget(new QLabel("Shortcuts", tail), 2, 0);
+        m_launchTail->addLayout(shortcuts, 2, 1);
+        form->addRow(tail);
         tabs->addTab(launch, "Launch");
     }
     QWidget *advanced = defaultsEditor ? static_cast<QWidget *>(new QGroupBox("Environment variables", this)) : new QWidget(tabs);
@@ -310,6 +318,10 @@ void GameOptionsWidget::setKind(const QString &kind) {
 
 void GameOptionsWidget::addGeneralOption(QWidget *option) {
     if (m_generalOptions) m_generalOptions->insertWidget(m_generalOptions->count() - 1, option);
+}
+
+void GameOptionsWidget::addIconControl(QWidget *control) {
+    if (m_launchTail) m_launchTail->addWidget(control, 0, 2, 3, 1, Qt::AlignRight | Qt::AlignBottom);
 }
 
 void GameOptionsWidget::finishLatestDownload() {

@@ -8,6 +8,7 @@ from uuid import uuid4
 from .common import BackendError, Paths, default_shared_prefix, expand_path
 from .steam import DEFAULT_PROTON
 from .lossless import default_options as default_lossless_options, validate_options as validate_lossless_options
+from .artwork import validate_artwork
 
 
 ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -184,6 +185,10 @@ class Store:
             if game["kind"] == "windows" and not game["prefix"] and (previous["prefix"] or previous["kind"] != "windows"):
                 # Clearing an explicit prefix resets it; untouched legacy blanks stay legacy.
                 game["prefix"] = self.get_settings()["new_game_defaults"]["prefix"] or str(default_shared_prefix())
+        if "artwork" in value:
+            game["artwork"] = validate_artwork(value["artwork"], self.paths)
+        elif not creating and "artwork" in previous:
+            game["artwork"] = previous["artwork"]
         document = json.dumps(game, ensure_ascii=False)
         with self.connection:
             if not creating:

@@ -4,6 +4,7 @@
 #include "settingsdialog.h"
 #include "removegamedialog.h"
 #include "helpdialogs.h"
+#include "artworkui.h"
 
 #include <QAction>
 #include <QApplication>
@@ -296,7 +297,9 @@ void MainWindow::populateLibrary(const QString &selectedId) {
     QModelIndex selected;
     for (const auto &value : m_bootstrap.value("games").toArray()) {
         const auto game = value.toObject();
-        auto *item = new QStandardItem(icon, game.value("title").toString());
+        const auto iconPath = game.value("artwork").toObject().value("icon").toString();
+        const auto image = iconPath.isEmpty() ? QImage() : readArtworkImage(iconPath);
+        auto *item = new QStandardItem(image.isNull() ? icon : QIcon(QPixmap::fromImage(image)), game.value("title").toString());
         item->setData(QVariant::fromValue(game), GameRole);
         item->setData(game.value("title").toString() + " " + tagNames(game).join(" "), SearchRole);
         item->setToolTip(game.value("path").toString());
@@ -345,7 +348,7 @@ void MainWindow::updateSelection() {
 void MainWindow::editGame(const QJsonObject &game) {
     if (m_busy) return;
     GameDialog dialog(game, m_bootstrap, this);
-    if (dialog.exec() != QDialog::Accepted) return;
+    if (dialog.exec() != QDialog::Accepted) { refresh(); return; }
     const auto updated = dialog.gameData();
     setBusy(true);
     m_backend->request("save_game", {{"game", updated}, {"shortcut_context", m_shortcutContext}}, [this](const QJsonObject &data) {
@@ -365,7 +368,7 @@ void MainWindow::addExecutable(const QString &path) {
     }
     GameDialog dialog({}, m_bootstrap, this);
     dialog.setExecutablePath(path);
-    if (dialog.exec() != QDialog::Accepted) return;
+    if (dialog.exec() != QDialog::Accepted) { refresh(); return; }
     const auto game = dialog.gameData();
     setBusy(true);
     m_backend->request("save_game", {{"game", game}, {"shortcut_context", m_shortcutContext}}, [this](const QJsonObject &data) {

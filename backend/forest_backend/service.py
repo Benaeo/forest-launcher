@@ -9,6 +9,8 @@ from .operations import library_operation
 from .steam import discover_protons, native_steam_root
 from .storage import Store
 from .shortcuts import Shortcuts
+from . import artwork
+from .icons import extract_icon
 from .proton import list_releases, download_version, download_latest, cleanup_downloads, install_root
 from .umu import UMUManager
 from .lossless import installed as lsfg_installed, discover_dll, MISSING_PACKAGE
@@ -58,6 +60,10 @@ class Service:
                 "umu": umu,
                 "paths": {"data": str(self.paths.data), "state": str(self.paths.state)},
             }
+        if action == "extract_icon":
+            return {"path": artwork.cache_bytes(self.paths, extract_icon(params.get("path")))}
+        if action == "import_artwork":
+            return artwork.import_image(self.paths, params.get("path"))
         if action == "discover_lossless_scaling":
             if not lsfg_installed():
                 raise BackendError(MISSING_PACKAGE, "missing_lsfg_vk")

@@ -11,6 +11,7 @@ class QPushButton;
 class QVBoxLayout;
 class QProgressBar;
 class QLabel;
+class QGridLayout;
 class BackendClient;
 
 class GameOptionsWidget : public QWidget {
@@ -23,6 +24,7 @@ public:
     QString protonSelection() const;
     void setKind(const QString &kind);
     void addGeneralOption(QWidget *option);
+    void addIconControl(QWidget *control);
 private:
     void updateKind();
     void updateLatestButton();
@@ -54,4 +56,5 @@ private:
     QCheckBox *m_appMenuShortcut;
     QPlainTextEdit *m_environment;
     QVBoxLayout *m_generalOptions = nullptr;
+    QGridLayout *m_launchTail = nullptr;
 };

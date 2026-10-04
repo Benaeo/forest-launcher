@@ -121,7 +121,7 @@ class Shortcuts:
         content = ("[Desktop Entry]\nType=Application\nVersion=1.0\n"
                    f"Name={entry_text(game['title'])}\n"
                    f"Exec={' '.join(exec_argument(argument) for argument in arguments)}\n"
-                   "Icon=applications-games\nTerminal=false\nCategories=Game;\n" + self.marker)
+                   f"Icon={entry_text(game.get('artwork', {}).get('icon') or 'applications-games')}\nTerminal=false\nCategories=Game;\n" + self.marker)
         targets = []
         for key in selected:
             if self.paths.root:
