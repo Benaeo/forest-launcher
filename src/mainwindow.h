@@ -29,7 +29,9 @@ private:
     void editGame(const QJsonObject &game);
     void removeSelected();
     void launchSelected();
-    void previewSelected();
+    void stopSelected();
+    void runFileSelected();
+    void pollRunning();
     void showSettings(const QJsonObject &pendingSettings = {});
     void showError(const QString &message);
     void setBusy(bool busy);
@@ -43,6 +45,7 @@ private:
     bool m_umuStarted = false;
     bool m_umuUpdating = false;
     bool m_busy = true;
+    bool m_polling = false;
     QJsonObject m_bootstrap;
     QJsonObject m_shortcutContext;
     QStandardItemModel *m_model;
@@ -64,6 +67,8 @@ private:
     QAction *m_editAction;
     QAction *m_removeAction;
     QAction *m_playAction;
-    QAction *m_previewAction;
+    QAction *m_stopAction;
+    QAction *m_runFileAction;
+    QAction *m_contextEditAction;
     QAction *m_settingsAction;
 };

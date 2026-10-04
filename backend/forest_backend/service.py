@@ -2,6 +2,10 @@ import shutil
 
 from .common import BackendError, Paths
 from .launch import build_plan, launch_game
+from .processes import running_games, stop_game
+from .prefixes import removal_info, delete_prefix
+from .prefixfiles import file_plan, run_file
+from .operations import library_operation
 from .steam import discover_protons, native_steam_root
 from .storage import Store
 from .shortcuts import Shortcuts
@@ -32,6 +36,13 @@ class Service:
     def dispatch(self, request: dict) -> dict:
         validate_request(request)
         action = request.get("action")
+        if action in ("save_game", "delete_game", "save_settings", "launch_game", "run_file", "stop_game"):
+            with library_operation(self.paths):
+                return self._dispatch(request)
+        return self._dispatch(request)
+
+    def _dispatch(self, request):
+        action = request.get("action")
         params = request.get("params", {})
         if action == "bootstrap":
             cleanup_downloads(self.paths)
@@ -39,6 +50,7 @@ class Service:
             umu = UMUManager(self.paths).status()
             return {
                 "games": self.store.list_games(), "settings": settings,
+                "running": running_games(self.paths),
                 "protons": discover_protons(native_steam_root(), directory=install_root(self.paths)),
                 "capabilities": {"umu": umu["path"], "steam": shutil.which("steam") or ""},
                 "umu": umu,
@@ -64,13 +76,39 @@ class Service:
                 return {"game": game, "shortcuts": files}
             except (BackendError, OSError) as error:
                 return {"game": game, "warning": f"Game saved, but shortcuts could not be updated: {error}"}
+        if action == "running_games":
+            return {"running": running_games(self.paths)}
+        if action == "stop_game":
+            return stop_game(self.paths, self.store.get_game(params.get("id", "")))
+        if action == "removal_info":
+            return removal_info(self.store.get_game(params.get("id", "")), self.store.get_settings(),
+                                self.store.list_games(), self.paths)
+        if action in ("run_file", "preview_file"):
+            game = self.store.get_game(params.get("id", ""))
+            settings = self.store.get_settings()
+            if action == "preview_file":
+                return file_plan(game, settings, self.paths, params.get("file")).public()
+            return run_file(game, settings, self.paths, params.get("file"))
         if action == "delete_game":
             game_id = params.get("id", "")
-            self.store.get_game(game_id)
+            game = self.store.get_game(game_id)
+            delete = params.get("delete_prefix", False)
+            if type(delete) is not bool:
+                raise BackendError("Delete prefix must be true or false.")
+            if delete:
+                info = removal_info(game, self.store.get_settings(), self.store.list_games(), self.paths)
+                if not info["can_delete"]:
+                    raise BackendError(info["reason"], "protected_prefix")
+                expected = params.get("expected_prefix")
+                if not isinstance(expected, dict) or any(expected.get(key) != info.get(key) for key in ("prefix", "device", "inode")):
+                    raise BackendError("The prefix changed since confirmation. Reopen the removal dialog.", "prefix_changed")
             try:
                 Shortcuts(self.paths, game_id).remove()
             except (BackendError, OSError) as error:
                 raise BackendError(f"Could not remove shortcuts; the library entry was kept: {error}", "shortcut_error")
+            if delete:
+                delete_prefix(game, self.store.get_settings(), self.store.list_games(), self.paths,
+                              params.get("expected_prefix"))
             self.store.delete_game(game_id)
             return {}
         if action == "save_settings":

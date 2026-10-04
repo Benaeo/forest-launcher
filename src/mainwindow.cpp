@@ -2,6 +2,7 @@
 #include "backendclient.h"
 #include "gamedialog.h"
 #include "settingsdialog.h"
+#include "removegamedialog.h"
 
 #include <QAction>
 #include <QApplication>
@@ -78,12 +79,21 @@ MainWindow::MainWindow(QString backendDirectory, QString dataRoot, bool smokeTes
     m_removeAction->setShortcut(QKeySequence::Delete);
     m_playAction = new QAction(icon("media-playback-start", QStyle::SP_MediaPlay), "Play", this);
     m_playAction->setShortcut(QKeySequence("Ctrl+Return"));
-    m_previewAction = new QAction("Preview launch…", this);
+    m_contextEditAction = new QAction("Edit", this);
+    m_contextEditAction->setObjectName("contextEditAction");
+    m_playAction->setObjectName("playAction");
+    m_removeAction->setText("Remove from library");
+    m_removeAction->setObjectName("removeGameAction");
+    m_stopAction = new QAction("SIGKILL", this);
+    m_stopAction->setObjectName("stopGameAction");
+    m_stopAction->setToolTip("Force-stop this game’s Forest-tracked processes. Unsaved progress will be lost.");
+    m_runFileAction = new QAction("Run file in the prefix", this);
+    m_runFileAction->setObjectName("runFileAction");
     m_settingsAction = new QAction(icon("configure", QStyle::SP_FileDialogDetailedView), "Settings…", this);
     auto *libraryMenu = menuBar()->addMenu("&Library");
     libraryMenu->addActions({m_addAction, m_editAction, m_removeAction});
     libraryMenu->addSeparator();
-    libraryMenu->addActions({m_playAction, m_previewAction});
+    libraryMenu->addActions({m_playAction, m_stopAction, m_runFileAction});
     libraryMenu->addSeparator();
     auto *quit = libraryMenu->addAction("Quit");
     quit->setShortcut(QKeySequence::Quit);
@@ -190,9 +200,11 @@ MainWindow::MainWindow(QString backendDirectory, QString dataRoot, bool smokeTes
     connect(m_library, &QListView::doubleClicked, this, [this] { launchSelected(); });
     connect(m_library, &QListView::customContextMenuRequested, this, [this](const QPoint &position) {
         const auto index = m_library->indexAt(position);
-        if (index.isValid()) m_library->setCurrentIndex(index);
+        if (!index.isValid()) return;
+        m_library->setCurrentIndex(index);
         QMenu menu(this);
-        menu.addActions({m_playAction, m_editAction, m_previewAction});
+        menu.setObjectName("gameContextMenu");
+        menu.addActions({m_playAction, m_contextEditAction, m_stopAction, m_runFileAction});
         menu.addSeparator();
         menu.addAction(m_removeAction);
         menu.exec(m_library->viewport()->mapToGlobal(position));
@@ -201,7 +213,13 @@ MainWindow::MainWindow(QString backendDirectory, QString dataRoot, bool smokeTes
     connect(m_editAction, &QAction::triggered, this, [this] { editGame(selectedGame()); });
     connect(m_removeAction, &QAction::triggered, this, &MainWindow::removeSelected);
     connect(m_playAction, &QAction::triggered, this, &MainWindow::launchSelected);
-    connect(m_previewAction, &QAction::triggered, this, &MainWindow::previewSelected);
+    connect(m_contextEditAction, &QAction::triggered, this, [this] { editGame(selectedGame()); });
+    connect(m_stopAction, &QAction::triggered, this, &MainWindow::stopSelected);
+    connect(m_runFileAction, &QAction::triggered, this, &MainWindow::runFileSelected);
+    auto *monitor = new QTimer(this);
+    monitor->setInterval(2000);
+    connect(monitor, &QTimer::timeout, this, &MainWindow::pollRunning);
+    if (!m_smokeTest) monitor->start();
     connect(m_settingsAction, &QAction::triggered, this, [this] { showSettings(); });
     connect(m_play, &QPushButton::clicked, this, &MainWindow::launchSelected);
     connect(m_edit, &QPushButton::clicked, this, [this] { editGame(selectedGame()); });
@@ -269,7 +287,10 @@ void MainWindow::updateSelection() {
     const bool requiresUmu = game.value("kind").toString() == "windows" && !tagNames(game).contains("online-fix");
     const bool waitingForUmu = requiresUmu && m_umuUpdating && !m_bootstrap.value("umu").toObject().value("available").toBool();
     const bool available = !m_busy && !game.isEmpty();
-    for (auto *action : {m_editAction, m_removeAction, m_playAction, m_previewAction}) action->setEnabled(available);
+    for (auto *action : {m_editAction, m_contextEditAction, m_removeAction, m_playAction}) action->setEnabled(available);
+    const bool running = m_bootstrap.value("running").toArray().contains(game.value("id"));
+    m_stopAction->setEnabled(available && running && game.value("kind").toString() != "steam");
+    m_runFileAction->setEnabled(available && game.value("kind").toString() == "windows" && !waitingForUmu);
     for (auto *button : {m_play, m_edit, m_log}) button->setEnabled(available);
     m_play->setEnabled(available && !waitingForUmu);
     m_playAction->setEnabled(available && !waitingForUmu);
@@ -330,15 +351,14 @@ void MainWindow::addExecutable(const QString &path) {
 void MainWindow::removeSelected() {
     const auto game = selectedGame();
     if (m_busy || game.isEmpty()) return;
-    QMessageBox prompt(QMessageBox::Question, "Remove game",
-        "Remove “" + game.value("title").toString() + "” from the library?\n\nForest-created shortcuts will also be removed. Game files and prefixes will not be deleted.",
-        QMessageBox::Yes | QMessageBox::No, this);
-    prompt.setTextFormat(Qt::PlainText);
-    prompt.setDefaultButton(QMessageBox::No);
-    if (prompt.exec() != QMessageBox::Yes) return;
     setBusy(true);
-    m_backend->request("delete_game", {{"id", game.value("id")}}, [this](const QJsonObject &) { refresh(); },
-        [this](const QString &error) { setBusy(false); showError(error); });
+    m_backend->request("removal_info", {{"id", game.value("id")}}, [this, game](const QJsonObject &info) {
+        RemoveGameDialog prompt(game, info, this);
+        if (prompt.exec() != QDialog::Accepted) { setBusy(false); return; }
+        m_backend->request("delete_game", {{"id", game.value("id")}, {"delete_prefix", prompt.deletePrefix()},
+                                          {"expected_prefix", info}}, [this](const QJsonObject &) { refresh(); },
+            [this](const QString &error) { setBusy(false); showError(error); });
+    }, [this](const QString &error) { setBusy(false); showError(error); });
 }
 
 void MainWindow::launchSelected() {
@@ -356,25 +376,51 @@ void MainWindow::launchSelected() {
     }, [this](const QString &error) { setBusy(false); statusBar()->showMessage("Launch failed."); showError(error); });
 }
 
-void MainWindow::previewSelected() {
+void MainWindow::stopSelected() {
     const auto game = selectedGame();
-    if (m_busy || game.isEmpty()) return;
+    if (!m_stopAction->isEnabled() || game.isEmpty()) return;
+    QMessageBox prompt(QMessageBox::Warning, "Force-stop game",
+        "Force-stop “" + game.value("title").toString() + "” using SIGKILL?\nUnsaved progress will be lost.",
+        QMessageBox::Yes | QMessageBox::No, this);
+    prompt.setTextFormat(Qt::PlainText);
+    prompt.setDefaultButton(QMessageBox::No);
+    if (prompt.exec() != QMessageBox::Yes) return;
     setBusy(true);
-    m_backend->request("preview_launch", {{"id", game.value("id")}}, [this](const QJsonObject &data) {
-        setBusy(false);
-        QDialog dialog(this);
-        dialog.setWindowTitle("Launch preview — nothing executed");
-        dialog.resize(740, 480);
-        auto *layout = new QVBoxLayout(&dialog);
-        auto *text = new QPlainTextEdit(&dialog);
-        text->setReadOnly(true);
-        text->setPlainText(QString::fromUtf8(QJsonDocument(data).toJson(QJsonDocument::Indented)));
-        layout->addWidget(text);
-        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
-        connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-        layout->addWidget(buttons);
-        dialog.exec();
+    m_backend->request("stop_game", {{"id", game.value("id")}}, [this](const QJsonObject &) {
+        refresh();
+        statusBar()->showMessage("Force-stop request sent.", 5000);
     }, [this](const QString &error) { setBusy(false); showError(error); });
+}
+
+void MainWindow::runFileSelected() {
+    const auto game = selectedGame();
+    if (!m_runFileAction->isEnabled() || game.isEmpty()) return;
+    const auto file = QFileDialog::getOpenFileName(this, "Select a file to run in the prefix",
+        QFileInfo(game.value("path").toString()).absolutePath(),
+        "Windows files (*.exe *.msi *.bat *.lnk *.reg *.EXE *.MSI *.BAT *.LNK *.REG);;All files (*)");
+    if (file.isEmpty()) return;
+    if (QFileInfo(file).suffix().compare("reg", Qt::CaseInsensitive) == 0) {
+        QMessageBox prompt(QMessageBox::Warning, "Import registry file",
+            "Import this registry file into the selected game’s prefix?\nRegistry changes can affect other games sharing the prefix.",
+            QMessageBox::Yes | QMessageBox::No, this);
+        prompt.setDefaultButton(QMessageBox::No);
+        if (prompt.exec() != QMessageBox::Yes) return;
+    }
+    setBusy(true);
+    m_backend->request("run_file", {{"id", game.value("id")}, {"file", file}}, [this](const QJsonObject &) {
+        refresh();
+        statusBar()->showMessage("Prefix file started.", 5000);
+    }, [this](const QString &error) { setBusy(false); showError(error); });
+}
+
+void MainWindow::pollRunning() {
+    if (m_busy || m_polling || m_bootstrap.isEmpty()) return;
+    m_polling = true;
+    m_backend->request("running_games", {}, [this](const QJsonObject &data) {
+        m_polling = false;
+        m_bootstrap.insert("running", data.value("running"));
+        updateSelection();
+    }, [this](const QString &) { m_polling = false; });
 }
 
 void MainWindow::showSettings(const QJsonObject &pendingSettings) {

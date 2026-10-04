@@ -7,6 +7,7 @@ import subprocess
 
 from .common import BackendError, Paths, expand_path
 from .onlinefix import resolve_fake_app_id
+from .processes import MARKER, prepare_tracking, finish_tracking
 from .steam import discover_installed_protons, discover_protons, ensure_native_steam, native_steam_root, runtime_command, steam_libraries
 from .umu import ensure_umu, find_umu
 
@@ -176,8 +177,8 @@ def base_plan(game: dict, settings: dict, paths: Paths, *, prepare_components=Fa
                       changes, str(executable.parent), log_path, str(prefix), "online-fix")
 
 
-def launch_game(game: dict, settings: dict, paths: Paths) -> dict:
-    plan = build_plan(game, settings, paths, prepare_components=True)
+def launch_game(game: dict, settings: dict, paths: Paths, *, plan=None) -> dict:
+    plan = plan or build_plan(game, settings, paths, prepare_components=True)
     if plan.mode == "online-fix":
         ensure_native_steam()
         compat_data, _ = native_prefix_layout(Path(plan.prefix), create=True)
@@ -191,8 +192,19 @@ def launch_game(game: dict, settings: dict, paths: Paths) -> dict:
     descriptor = os.open(plan.log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     with os.fdopen(descriptor, "ab", buffering=0) as log:
         log.write(("\nForest launch: " + shlex.join(plan.command) + "\n").encode("utf-8"))
-        process = subprocess.Popen(
-            plan.command, cwd=plan.cwd, env=environment, stdin=subprocess.DEVNULL,
-            stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
-        )
+        tracking = None
+        if game["kind"] != "steam":
+            tracking, record = prepare_tracking(paths, game["id"])
+            environment[MARKER] = record["token"]
+        try:
+            process = subprocess.Popen(
+                plan.command, cwd=plan.cwd, env=environment, stdin=subprocess.DEVNULL,
+                stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+            )
+        except Exception:
+            if tracking:
+                tracking.unlink(missing_ok=True)
+            raise
+        if tracking:
+            finish_tracking(tracking, record, process.pid)
     return {**plan.public(), "pid": process.pid, "game_id": game["id"]}
