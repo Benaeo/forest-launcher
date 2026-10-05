@@ -173,6 +173,52 @@ def download_archive(asset, path, progress):
         raise BackendError('Proton download failed its size or checksum verification.', 'proton_checksum')
 
 
+def checked_archive_path(path, runner_root):
+    try:
+        if not path.resolve().is_relative_to(runner_root):
+            raise BackendError('Unsafe resolved path in Proton archive.')
+    except (OSError, RuntimeError, ValueError) as error:
+        raise BackendError(f'Invalid path in Proton archive: {error}') from None
+    return path
+
+
+def extract_member(archive, member, destination, runner_root):
+    # Early Python 3.11 has no tarfile data filter. Extract only validated
+    # entries ourselves; never apply archived ownership or privileged modes.
+    path = checked_archive_path(destination / member.name, runner_root)
+    if member.isdir():
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        return
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if member.isfile():
+        with archive.extractfile(member) as source:
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(descriptor, 'wb') as output:
+                shutil.copyfileobj(source, output, 256 * 1024)
+                output.flush()
+                mode = member.mode & 0o755
+                if not member.mode & 0o100:
+                    mode &= ~0o111
+                os.fchmod(output.fileno(), mode | 0o600)
+                try:
+                    os.utime(output.fileno(), (member.mtime, member.mtime))
+                except (ValueError, OverflowError):
+                    raise BackendError('Invalid timestamp in Proton archive.') from None
+        return
+    target = path.parent / member.linkname if member.issym() else destination / member.linkname
+    target = checked_archive_path(target, runner_root)
+    if member.islnk() and not target.is_file():
+        raise BackendError('Proton archive hard link must reference an extracted regular file.')
+    if path.exists() or path.is_symlink():
+        path.unlink()
+    if member.issym():
+        os.symlink(member.linkname, path)
+    else:
+        # Resolve to a validated regular file, not a symlink inode. Hard links
+        # retain that file's already-sanitized permissions and ownership.
+        os.link(target.resolve(), path, follow_symlinks=False)
+
+
 def extract_archive(archive_path, destination, progress):
     with tarfile.open(archive_path, 'r:*') as archive:
         members = []
@@ -193,6 +239,8 @@ def extract_archive(archive_path, destination, progress):
                                            if member.issym() else member.linkname)
                 if PurePosixPath(target).is_absolute() or PurePosixPath(target).parts[0] != root:
                     raise BackendError('Unsafe link in Proton archive.')
+            if member.size < 0:
+                raise BackendError('Invalid size in Proton archive.')
             total += member.size
             members.append(member)
             if len(members) > MAX_MEMBERS or total > MAX_UNPACKED:
@@ -201,10 +249,16 @@ def extract_archive(archive_path, destination, progress):
             raise BackendError('Proton archive is empty.')
         if shutil.disk_usage(destination).free < total + 128 * 1024**2:
             raise BackendError('Not enough free disk space to extract Proton.')
+        runner_root = destination.resolve() / root
         for index, member in enumerate(members):
-            archive.extract(member, destination, filter='data')
+            extract_member(archive, member, destination, runner_root)
             if index % 200 == 0 or index + 1 == len(members):
                 progress({'phase': 'extract', 'bytes': index + 1, 'total': len(members)})
+        # A later symlink can change how an earlier link resolves. Reject
+        # those escapes before publishing the private staging directory.
+        for member in members:
+            if member.issym():
+                checked_archive_path(destination / member.name, runner_root)
     runner = destination / root
     if not (runner / 'proton').is_file() or not (runner / 'compatibilitytool.vdf').is_file():
         raise BackendError('The extracted download is not a Steam Proton runner.')
