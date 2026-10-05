@@ -30,7 +30,6 @@
 #include <QLineEdit>
 #include <QListView>
 #include <QMenu>
-#include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPlainTextEdit>
@@ -91,15 +90,12 @@ MainWindow::MainWindow(QString backendDirectory, QString dataRoot, bool smokeTes
     m_runFileAction = new QAction("Run file in the prefix", this);
     m_runFileAction->setObjectName("runFileAction");
     m_settingsAction = new QAction(icon("configure", QStyle::SP_FileDialogDetailedView), "Settings…", this);
-    auto *libraryMenu = menuBar()->addMenu("&Library");
-    libraryMenu->addActions({m_addAction, m_editAction, m_removeAction});
-    libraryMenu->addSeparator();
-    libraryMenu->addActions({m_playAction, m_runFileAction});
-    libraryMenu->addSeparator();
-    auto *quit = libraryMenu->addAction("Quit");
+    // No menu bar: keep shortcuts registered on the window even for actions
+    // that now appear only in the context menu (Play/Stop and Remove).
+    auto *quit = new QAction("Quit", this);
     quit->setShortcut(QKeySequence::Quit);
     connect(quit, &QAction::triggered, this, &QWidget::close);
-    menuBar()->addMenu("&Tools")->addAction(m_settingsAction);
+    addActions({m_addAction, m_editAction, m_removeAction, m_playAction, m_runFileAction, m_settingsAction, quit});
     auto *toolbar = addToolBar("Library");
     toolbar->setMovable(false);
     toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
