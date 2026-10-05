@@ -150,11 +150,13 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     m_appMenuShortcut->setObjectName("appMenuShortcutCheck");
     m_appMenuShortcut->setChecked(options.value("app_menu_shortcut").toBool());
     m_appMenuShortcut->setToolTip("Create a Forest shortcut in your application menu when this game is saved.");
-    m_steamShortcut = new QCheckBox(defaultsEditor ? "Steam (per game)" : "Steam", this);
+    m_steamShortcut = new QCheckBox("Steam", this);
     auto *steamShortcut = m_steamShortcut;
     steamShortcut->setObjectName("steamShortcutCheck");
     steamShortcut->setChecked(options.value("steam_shortcut").toBool());
-    steamShortcut->setToolTip("Write a Forest shortcut and selected artwork for the checked accounts. Restart Steam to refresh its library; writing shortcuts never stops Steam.");
+    steamShortcut->setToolTip(defaultsEditor
+        ? "Copy this Steam shortcut preference and selected accounts to new non-Steam-library games. Existing games are unchanged."
+        : "Write a Forest shortcut and selected artwork for the checked accounts. Restart Steam to refresh its library; writing shortcuts never stops Steam.");
     m_steamAccountsButton = new QToolButton(this);
     m_steamAccountsButton->setObjectName("steamAccountsButton");
     m_steamAccountsButton->setText("Accounts");
@@ -195,14 +197,12 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     for (auto *action : accountMenu->actions())
         connect(action, &QAction::toggled, this, [updateShortcutAccountText](bool) { updateShortcutAccountText(); });
     updateShortcutAccountText();
-    steamShortcut->setEnabled(!defaultsEditor && m_hasSteamAccounts && kind() != "steam");
-    if (defaultsEditor || !m_hasSteamAccounts) steamShortcut->setToolTip(defaultsEditor ? "Select Steam accounts in each game’s Add/Edit dialog." : "No local native Steam accounts were found. Sign in to Steam first.");
-    m_steamAccountsButton->setVisible(!defaultsEditor);
-    connect(steamShortcut, &QCheckBox::toggled, this, [this](bool checked) { m_steamAccountsButton->setEnabled(checked && !m_defaultsEditor); });
-    m_steamAccountsButton->setEnabled(steamShortcut->isChecked() && !defaultsEditor);
+    steamShortcut->setEnabled(defaultsEditor || (m_hasSteamAccounts && kind() != "steam"));
+    if (!m_hasSteamAccounts) m_steamAccountsButton->setToolTip("No local native Steam accounts were found. Sign in to Steam first.");
+    connect(steamShortcut, &QCheckBox::toggled, this, [this](bool checked) { m_steamAccountsButton->setEnabled(checked); });
+    m_steamAccountsButton->setEnabled(steamShortcut->isChecked());
     m_steamLaunchAccountButton = new QToolButton(this);
     m_steamLaunchAccountButton->setObjectName("steamLaunchAccountButton");
-    m_steamLaunchAccountButton->setVisible(!defaultsEditor);
     m_steamLaunchAccountButton->setText("Account");
     m_steamLaunchAccountButton->setPopupMode(QToolButton::InstantPopup);
     auto *launchAccountMenu = new QMenu(m_steamLaunchAccountButton);
@@ -262,11 +262,19 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
         m_generalOptions->addWidget(m_mangohud);
         m_generalOptions->addWidget(m_preferSdl);
         m_generalOptions->addWidget(m_noSleep);
-        m_generalOptions->addWidget(m_onlineFix);
+        auto *onlineFixDefaultsRow = new QHBoxLayout;
+        onlineFixDefaultsRow->addWidget(m_onlineFix);
+        onlineFixDefaultsRow->addWidget(m_steamLaunchAccountButton);
+        onlineFixDefaultsRow->addStretch();
+        m_generalOptions->addLayout(onlineFixDefaultsRow);
         m_generalOptions->addWidget(new QLabel("New game shortcuts", this));
         m_generalOptions->addWidget(m_desktopShortcut);
         m_generalOptions->addWidget(m_appMenuShortcut);
-        m_generalOptions->addWidget(steamShortcut);
+        auto *steamDefaultsRow = new QHBoxLayout;
+        steamDefaultsRow->addWidget(steamShortcut);
+        steamDefaultsRow->addWidget(m_steamAccountsButton);
+        steamDefaultsRow->addStretch();
+        m_generalOptions->addLayout(steamDefaultsRow);
         m_generalOptions->addStretch();
     } else {
         tools = new QHBoxLayout;
@@ -416,7 +424,7 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     }
     connect(m_kind, &QComboBox::currentIndexChanged, this, [this] { updateKind(); });
     connect(m_onlineFix, &QCheckBox::toggled, this, [this] {
-        m_steamLaunchAccountButton->setEnabled(m_onlineFix->isEnabled() && m_onlineFix->isChecked() && !m_defaultsEditor);
+        m_steamLaunchAccountButton->setEnabled(m_onlineFix->isEnabled() && m_onlineFix->isChecked());
     });
     connect(m_prefixBrowse, &QPushButton::clicked, this, [this] {
         const auto path = QFileDialog::getExistingDirectory(this, "Choose Wine prefix", m_prefix->text());
@@ -553,7 +561,7 @@ void GameOptionsWidget::updateKind() {
     m_prefix->setEnabled(windows);
     m_prefixBrowse->setEnabled(windows);
     m_proton->setEnabled(windows);
-    m_onlineFix->setEnabled(windows && (m_defaultsEditor || m_onlineFixSupported));
+    m_onlineFix->setEnabled(m_defaultsEditor || (windows && m_onlineFixSupported));
     m_onlineFix->setToolTip(m_defaultsEditor
         ? "Prefer Steam online-fix for new games only when a valid Steam configuration is detected beside their executable."
         : m_onlineFix->isEnabled()
@@ -563,10 +571,10 @@ void GameOptionsWidget::updateKind() {
     m_mangohud->setEnabled(kind() != "steam");
     m_preferSdl->setEnabled(windows);
     m_noSleep->setEnabled(kind() != "steam");
-    m_steamShortcut->setEnabled(!m_defaultsEditor && m_hasSteamAccounts && kind() != "steam");
-    if (kind() == "steam") m_steamShortcut->setChecked(false);
-    m_steamAccountsButton->setEnabled(m_steamShortcut->isChecked() && !m_defaultsEditor);
-    m_steamLaunchAccountButton->setEnabled(m_onlineFix->isEnabled() && m_onlineFix->isChecked() && !m_defaultsEditor);
+    m_steamShortcut->setEnabled(m_defaultsEditor || (m_hasSteamAccounts && kind() != "steam"));
+    if (!m_defaultsEditor && kind() == "steam") m_steamShortcut->setChecked(false);
+    m_steamAccountsButton->setEnabled(m_steamShortcut->isChecked());
+    m_steamLaunchAccountButton->setEnabled(m_onlineFix->isEnabled() && m_onlineFix->isChecked());
     m_losslessButton->setEnabled(m_lsfgInstalled && kind() != "steam");
     m_losslessButton->setToolTip(!m_lsfgInstalled
         ? "Install the missing package lsfg-vk to use this feature."
@@ -600,9 +608,10 @@ QJsonObject GameOptionsWidget::optionsData() const {
         {"app_menu_shortcut", m_appMenuShortcut->isChecked()},
         {"environment", m_environment->isEnabled() ? m_environment->toPlainText() : QString()},
     };
-    if (!m_defaultsEditor) {
+    {
+        // Defaults are snapshots, not live overrides of existing profiles.
         result.insert("online_fix_requested", m_onlineFix->isChecked());
-        result.insert("steam_shortcut", m_steamShortcut->isChecked() && kind() != "steam");
+        result.insert("steam_shortcut", m_steamShortcut->isChecked() && (m_defaultsEditor || kind() != "steam"));
         QJsonArray accounts;
         for (auto *action : m_steamAccountsButton->menu()->actions())
             if (action->isChecked()) accounts.append(action->data().toString());

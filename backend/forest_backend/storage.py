@@ -56,9 +56,26 @@ def parse_environment(value) -> dict[str, str]:
 
 def default_game_options() -> dict:
     return {"kind": "windows", "prefix": str(default_shared_prefix()), "proton": "default",
-            "arguments": "", "environment": {}, "tags": [],
+            "arguments": "", "environment": {}, "tags": [], "online_fix_requested": False,
+            "steam_launch_account": "", "steam_shortcut": False, "steam_accounts": [],
             "lossless_scaling": default_lossless_options(),
             **dict.fromkeys((*LAUNCH_TOGGLES, *SHORTCUT_TOGGLES), False)}
+
+
+def validate_steam_defaults(value: dict) -> dict:
+    """Validate the default snapshot without writing Steam or editing games."""
+    shortcut = value.get("steam_shortcut", False)
+    if type(shortcut) is not bool:
+        raise BackendError("Steam shortcut default must be true or false.")
+    accounts = selected_accounts(value.get("steam_accounts", []))
+    if shortcut and not accounts:
+        raise BackendError("Select at least one Steam account for the shortcut default.")
+    account = value.get("steam_launch_account", "")
+    if account != "":
+        account = selected_accounts([account])[0]
+        if not 0 < int(account) <= 0xFFFFFFFF:
+            raise BackendError("Choose a valid default Steam launch account.")
+    return {"steam_shortcut": shortcut, "steam_accounts": accounts, "steam_launch_account": account}
 
 
 def validate_game_options(value: dict) -> dict:
@@ -174,6 +191,11 @@ class Store:
         if creating:
             settings = self.get_settings()
             combined = {**settings["new_game_defaults"], **value}
+            # Explicit per-game tags override the old tag-based default even
+            # when a client has not yet adopted the separate checkbox field.
+            if "tags" in value and "online_fix_requested" not in value and isinstance(value["tags"], list):
+                combined["online_fix_requested"] = any(isinstance(tag, str) and tag.strip().casefold() == "online-fix"
+                                                       for tag in value["tags"])
             if combined["kind"] != "windows" and "tags" not in value:
                 combined["tags"] = [tag for tag in combined["tags"] if tag != "online-fix"]
             game = validate_game(combined)
@@ -200,17 +222,20 @@ class Store:
             game["artwork"] = validate_artwork(value["artwork"], self.paths)
         elif not creating and "artwork" in previous:
             game["artwork"] = previous["artwork"]
-        if "steam_shortcut" in value or (not creating and "steam_shortcut" in previous):
-            selected = value.get("steam_shortcut", previous.get("steam_shortcut", False) if not creating else False)
+        steam_values = combined if creating else value
+        if "steam_shortcut" in steam_values or (not creating and "steam_shortcut" in previous):
+            selected = steam_values.get("steam_shortcut", previous.get("steam_shortcut", False) if not creating else False)
+            if creating and game["kind"] == "steam" and "steam_shortcut" not in value:
+                selected = False
             if type(selected) is not bool:
                 raise BackendError("Steam shortcut must be true or false.")
             game["steam_shortcut"] = selected
-            game["steam_accounts"] = selected_accounts(value.get("steam_accounts", previous.get("steam_accounts", []) if not creating else []))
+            game["steam_accounts"] = selected_accounts(steam_values.get("steam_accounts", previous.get("steam_accounts", []) if not creating else []))
             if selected and not game["steam_accounts"]:
                 raise BackendError("Select at least one Steam account for the shortcut.")
             if selected and game["kind"] == "steam":
                 raise BackendError("Steam library games do not need an additional Steam shortcut.")
-        launch_account = value.get("steam_launch_account", previous.get("steam_launch_account", "") if not creating else "")
+        launch_account = steam_values.get("steam_launch_account", previous.get("steam_launch_account", "") if not creating else "")
         game["steam_launch_account"] = ""
         if game.get("online_fix_requested", "online-fix" in game["tags"]):
             game["steam_launch_account"] = selected_accounts([launch_account])[0] if launch_account != "" else ""
@@ -247,7 +272,12 @@ class Store:
         }
         for key, value in self.connection.execute("SELECT key, value FROM settings"):
             if key == "new_game_defaults":
-                defaults[key].update(json.loads(value))
+                saved = json.loads(value)
+                defaults[key].update(saved)
+                # Read-time compatibility only; do not rewrite the saved
+                # template or any existing profile during bootstrap.
+                defaults[key]["online_fix_requested"] = saved.get("online_fix_requested",
+                    "online-fix" in saved.get("tags", []))
             elif key in defaults:
                 defaults[key] = json.loads(value)
         if defaults["default_proton"] in ("", "default", "auto"):
@@ -275,10 +305,13 @@ class Store:
             if not isinstance(options, dict) or set(options) - set(default_game_options()):
                 raise BackendError("New game defaults must contain only supported game options.")
             combined = {**settings["new_game_defaults"], **options}
+            if "tags" in options and "online_fix_requested" not in options and isinstance(options["tags"], list):
+                combined["online_fix_requested"] = any(isinstance(tag, str) and tag.strip().casefold() == "online-fix"
+                                                       for tag in options["tags"])
             if isinstance(options.get("lossless_scaling"), dict):
                 combined["lossless_scaling"] = {**settings["new_game_defaults"]["lossless_scaling"],
                                                 **options["lossless_scaling"]}
-            options = validate_game_options(combined)
+            options = {**validate_game_options(combined), **validate_steam_defaults(combined)}
             if options["proton"] not in ("", "default"):
                 if "default_proton" in values and values["default_proton"] != options["proton"]:
                     raise BackendError("Default Proton selections must agree.")
