@@ -118,7 +118,7 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     m_tags = new QLineEdit(tags.join(", "), this);
     m_tags->setObjectName("gameTags");
     m_tags->setPlaceholderText("Optional comma-separated tags");
-    m_onlineFix = new QCheckBox("online-fix — Steam", this);
+    m_onlineFix = new QCheckBox("online-fix - Steam", this);
     m_onlineFix->setObjectName("onlineFixCheck");
     m_onlineFix->setToolTip("Use native Steam and Proton with the [Main] FakeAppId from OnlineFix.ini or SteamFix.ini beside the game executable. A valid INI is required. No game files are changed.");
     m_onlineFix->setChecked(options.value("tags").toArray().contains("online-fix"));
@@ -159,6 +159,7 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
         auto *action = accountMenu->addAction(account.value("name").toString() + " (" + account.value("id").toString() + ")");
         action->setCheckable(true);
         action->setData(account.value("id").toString());
+        action->setProperty("accountName", account.value("name").toString());
         action->setChecked(selectedAccounts.contains(account.value("id")));
     }
     m_hasSteamAccounts = !accountMenu->actions().isEmpty();
@@ -168,8 +169,24 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
         if (!found) {
             auto *action = accountMenu->addAction("Unavailable account (" + identity.toString() + ")");
             action->setCheckable(true); action->setChecked(true); action->setData(identity.toString());
+            action->setProperty("accountName", "Unavailable account (" + identity.toString() + ")");
         }
     }
+    const auto updateShortcutAccountText = [this, accountMenu] {
+        int count = 0;
+        QString name;
+        for (auto *action : accountMenu->actions()) {
+            if (!action->isChecked()) continue;
+            ++count;
+            name = action->property("accountName").toString();
+            if (name.isEmpty()) name = action->data().toString();
+        }
+        m_steamAccountsButton->setText(count == 1 ? name
+            : count > 1 ? QString("Accounts (%1)").arg(count) : QString("Accounts"));
+    };
+    for (auto *action : accountMenu->actions())
+        connect(action, &QAction::toggled, this, [updateShortcutAccountText](bool) { updateShortcutAccountText(); });
+    updateShortcutAccountText();
     steamShortcut->setEnabled(!defaultsEditor && m_hasSteamAccounts && kind() != "steam");
     if (defaultsEditor || !m_hasSteamAccounts) steamShortcut->setToolTip(defaultsEditor ? "Select Steam accounts in each game’s Add/Edit dialog." : "No local native Steam accounts were found. Sign in to Steam first.");
     m_steamAccountsButton->setVisible(!defaultsEditor);
@@ -187,6 +204,7 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     auto *anyAccount = launchAccountMenu->addAction("Any account");
     anyAccount->setCheckable(true);
     anyAccount->setData(QString());
+    anyAccount->setProperty("accountName", "Any account");
     launchAccountGroup->addAction(anyAccount);
     const auto switchable = bootstrap.value(bootstrap.contains("steam_switchable_accounts")
         ? "steam_switchable_accounts" : "steam_accounts").toArray();
@@ -198,6 +216,7 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
         auto *action = launchAccountMenu->addAction(account.value("name").toString() + " (" + identity + ")");
         action->setCheckable(true);
         action->setData(identity);
+        action->setProperty("accountName", account.value("name").toString());
         launchAccountGroup->addAction(action);
         if (!identity.isEmpty() && identity == wantedAccount) checkedAccount = action;
     }
@@ -205,10 +224,24 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
         checkedAccount = launchAccountMenu->addAction("Unavailable account (" + wantedAccount + ")");
         checkedAccount->setCheckable(true);
         checkedAccount->setData(wantedAccount);
+        checkedAccount->setProperty("accountName", "Unavailable account (" + wantedAccount + ")");
         checkedAccount->setToolTip("This game still requires this account. Sign in to it through Steam, or explicitly choose another account.");
         launchAccountGroup->addAction(checkedAccount);
     }
+    const auto updateLaunchAccountText = [this, launchAccountMenu] {
+        for (auto *action : launchAccountMenu->actions()) {
+            if (!action->isChecked()) continue;
+            auto name = action->property("accountName").toString();
+            if (name.isEmpty()) name = action->data().toString();
+            m_steamLaunchAccountButton->setText(name);
+            return;
+        }
+        m_steamLaunchAccountButton->setText("Any account");
+    };
+    for (auto *action : launchAccountMenu->actions())
+        connect(action, &QAction::toggled, this, [updateLaunchAccountText](bool) { updateLaunchAccountText(); });
     (checkedAccount ? checkedAccount : anyAccount)->setChecked(true);
+    updateLaunchAccountText();
     auto accountTooltip = QString("Online-fix games only. Requires “Remember password” for switching. Forest asks before restarting an open Steam client. Any account uses whichever account is signed in.");
     const auto accountError = bootstrap.value("steam_account_error").toString();
     if (!accountError.isEmpty()) accountTooltip += "\n" + accountError;
