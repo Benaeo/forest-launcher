@@ -1,0 +1,171 @@
+name: Build and publish release
+
+# Branch pushes and pull requests NEVER publish a release.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    outputs:
+      version: ${{ steps.source.outputs.version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require an annotated tag matching all three source versions
+        id: source
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="$(python3 scripts/release.py validate --tag "$RELEASE_TAG")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  packages:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Update distro versions deliberately, after compatibility testing.
+          - target: arch
+            image: archlinux:base
+          # Build one shared .deb on the older supported Qt/glibc baseline.
+          - target: deb
+            image: ubuntu:24.04
+          - target: fedora44
+            image: fedora:44
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build, test, package and smoke-test in the target distro
+        env:
+          TARGET: ${{ matrix.target }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          docker run --rm --platform linux/amd64 \
+            -e TARGET -v "$PWD:/work" -w /work "$IMAGE" bash -euo pipefail -c '
+              case "$TARGET" in
+                arch)
+                  pacman -Syu --noconfirm --needed base-devel cmake ninja qt6-base python git zstd
+                  useradd --create-home builder
+                  chown -R builder:builder /work
+                  runuser -u builder -- bash scripts/package.sh "$TARGET"
+                  ;;
+                deb)
+                  export DEBIAN_FRONTEND=noninteractive
+                  apt-get update
+                  apt-get install -y --no-install-recommends build-essential cmake ninja-build \
+                    qt6-base-dev qt6-qpa-plugins qt6-wayland python3 git dpkg-dev ca-certificates
+                  bash scripts/package.sh "$TARGET"
+                  ;;
+                fedora44)
+                  dnf install -y gcc-c++ cmake ninja-build qt6-qtbase-devel python3 git \
+                    rpm-build rpmdevtools cpio
+                  bash scripts/package.sh "$TARGET"
+                  ;;
+              esac
+            '
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ matrix.target }}
+          path: build/release-output/*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  deb-compatibility:
+    needs: [validate, packages]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [ubuntu:24.04, debian:13]
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-deb
+          path: build/deb-test
+      - name: Install the same shared package in a clean target distro
+        env:
+          IMAGE: ${{ matrix.image }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          docker run --rm --platform linux/amd64 \
+            -e RELEASE_VERSION -e DEBIAN_FRONTEND=noninteractive \
+            -v "$PWD/build/deb-test:/packages:ro" "$IMAGE" bash -euo pipefail -c '
+              apt-get update
+              # Suggests are informational, not automatically installed tools.
+              apt-get install -y -o APT::Install-Suggests=false /packages/forest-launcher_*_amd64.deb
+              dpkg --audit
+              dpkg-query -W forest-launcher
+              QT_QPA_PLATFORM=offscreen forest-launcher --version | \
+                grep -Fx "forest-launcher $RELEASE_VERSION"
+              QT_QPA_PLATFORM=offscreen timeout 20s forest-launcher --smoke-test
+            '
+
+  publish:
+    needs: [validate, packages, deb-compatibility]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          path: build/release-assets
+          merge-multiple: true
+      - name: Require exactly the three native binary packages
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 scripts/release.py verify-assets --tag "$RELEASE_TAG" --output build/release-assets
+      - name: Publish only after every package succeeds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          # A failed upload leaves a draft, not a partially published release.
+          cat > build/release-notes.md <<'EOF'
+          ## Linux x86_64 downloads
+          - Arch Linux: .pkg.tar.zst
+          - Fedora 44: .fc44.x86_64.rpm
+          - Debian 13 / Ubuntu 24.04 LTS: shared amd64.deb
+
+          Native packages require Qt 6.4+ and Python 3.11+; the package manager resolves dependencies.
+          Steam, MangoHud and lsfg-vk are optional packages; availability/repository requirements vary by distro.
+          Games, Steam, Proton runners and optional integrations are not bundled.
+          ARM and Flatpak builds are not included in this release.
+          EOF
+          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > build/release-draft.txt; then
+            [[ "$(tr -d '\n' < build/release-draft.txt)" == true ]] || {
+              echo "This release is already public; refusing to overwrite its assets." >&2
+              exit 1
+            }
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --title "Forest Launcher $RELEASE_TAG" --notes-file build/release-notes.md
+          fi
+          gh release upload "$RELEASE_TAG" build/release-assets/* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --latest --notes-file build/release-notes.md

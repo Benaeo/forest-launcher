@@ -194,7 +194,8 @@ def sync(paths, game, context=None, *, remove=False):
     if targets:
         if not isinstance(context, dict) or not all(isinstance(context.get(key), str) and Path(context[key]).is_absolute() for key in ("launcher", "backend")):
             raise BackendError("Steam shortcuts require the Forest executable location.")
-        if not os.access(context["launcher"], os.X_OK) or not (Path(context["backend"]) / "forest_backend/__main__.py").is_file():
+        if not Path(context["launcher"]).is_file() or not os.access(context["launcher"], os.X_OK) or not (
+                Path(context["backend"]) / "forest_backend/__main__.py").is_file():
             raise BackendError("Forest executable/backend for the Steam shortcut was not found.")
         executable = quoted(context["launcher"])
         args = ["--backend-dir", context["backend"]]
