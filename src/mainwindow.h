@@ -46,6 +46,7 @@ private:
     bool m_umuUpdating = false;
     bool m_busy = true;
     bool m_polling = false;
+    quint64 m_runningGeneration = 0;
     QJsonObject m_bootstrap;
     QJsonObject m_shortcutContext;
     QStandardItemModel *m_model;
@@ -67,7 +68,6 @@ private:
     QAction *m_editAction;
     QAction *m_removeAction;
     QAction *m_playAction;
-    QAction *m_stopAction;
     QAction *m_runFileAction;
     QAction *m_contextEditAction;
     QAction *m_settingsAction;

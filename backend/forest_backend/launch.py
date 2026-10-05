@@ -8,7 +8,7 @@ import subprocess
 from .common import BackendError, Paths, expand_path
 from .onlinefix import resolve_fake_app_id
 from .lossless import launch_environment as lossless_environment
-from .processes import MARKER, prepare_tracking, finish_tracking
+from .processes import MARKER, prepare_tracking, finish_tracking, running_games
 from .steam import discover_installed_protons, discover_protons, native_steam_root, runtime_command, steam_libraries
 from .steamaccount import prepare_account
 from .umu import ensure_umu, find_umu
@@ -183,6 +183,10 @@ def base_plan(game: dict, settings: dict, paths: Paths, *, prepare_components=Fa
 
 def launch_game(game: dict, settings: dict, paths: Paths, *, plan=None,
                 steam_restart_consent=None) -> dict:
+    # Service serializes profile operations across GUI/shortcut processes.
+    # Reject duplicates before runner preparation, Steam changes or log writes.
+    if game["kind"] != "steam" and game["id"] in running_games(paths):
+        raise BackendError("This game is already running. Stop it before starting it again.", "game_already_running")
     plan = plan or build_plan(game, settings, paths, prepare_components=True)
     account = {}
     if plan.mode == "online-fix":

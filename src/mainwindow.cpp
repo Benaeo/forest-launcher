@@ -88,16 +88,13 @@ MainWindow::MainWindow(QString backendDirectory, QString dataRoot, bool smokeTes
     m_playAction->setObjectName("playAction");
     m_removeAction->setText("Remove from library");
     m_removeAction->setObjectName("removeGameAction");
-    m_stopAction = new QAction("SIGKILL", this);
-    m_stopAction->setObjectName("stopGameAction");
-    m_stopAction->setToolTip("Force-stop this game’s Forest-tracked processes. Unsaved progress will be lost.");
     m_runFileAction = new QAction("Run file in the prefix", this);
     m_runFileAction->setObjectName("runFileAction");
     m_settingsAction = new QAction(icon("configure", QStyle::SP_FileDialogDetailedView), "Settings…", this);
     auto *libraryMenu = menuBar()->addMenu("&Library");
     libraryMenu->addActions({m_addAction, m_editAction, m_removeAction});
     libraryMenu->addSeparator();
-    libraryMenu->addActions({m_playAction, m_stopAction, m_runFileAction});
+    libraryMenu->addActions({m_playAction, m_runFileAction});
     libraryMenu->addSeparator();
     auto *quit = libraryMenu->addAction("Quit");
     quit->setShortcut(QKeySequence::Quit);
@@ -232,7 +229,7 @@ MainWindow::MainWindow(QString backendDirectory, QString dataRoot, bool smokeTes
         m_library->setCurrentIndex(index);
         QMenu menu(this);
         menu.setObjectName("gameContextMenu");
-        menu.addActions({m_playAction, m_contextEditAction, m_stopAction, m_runFileAction});
+        menu.addActions({m_playAction, m_contextEditAction, m_runFileAction});
         menu.addSeparator();
         menu.addAction(m_removeAction);
         menu.exec(m_library->viewport()->mapToGlobal(position));
@@ -242,7 +239,6 @@ MainWindow::MainWindow(QString backendDirectory, QString dataRoot, bool smokeTes
     connect(m_removeAction, &QAction::triggered, this, &MainWindow::removeSelected);
     connect(m_playAction, &QAction::triggered, this, &MainWindow::launchSelected);
     connect(m_contextEditAction, &QAction::triggered, this, [this] { editGame(selectedGame()); });
-    connect(m_stopAction, &QAction::triggered, this, &MainWindow::stopSelected);
     connect(m_runFileAction, &QAction::triggered, this, &MainWindow::runFileSelected);
     auto *monitor = new QTimer(this);
     monitor->setInterval(2000);
@@ -266,6 +262,7 @@ QJsonObject MainWindow::selectedGame() const {
 }
 
 void MainWindow::setBusy(bool busy) {
+    if (busy) ++m_runningGeneration;
     m_busy = busy;
     m_addAction->setEnabled(!busy);
     m_settingsAction->setEnabled(!busy);
@@ -319,11 +316,23 @@ void MainWindow::updateSelection() {
     const bool available = !m_busy && !game.isEmpty();
     for (auto *action : {m_editAction, m_contextEditAction, m_removeAction, m_playAction}) action->setEnabled(available);
     const bool running = m_bootstrap.value("running").toArray().contains(game.value("id"));
-    m_stopAction->setEnabled(available && running && game.value("kind").toString() != "steam");
+    const bool stoppable = running && game.value("kind").toString() != "steam";
+    const auto playText = stoppable ? "Stop" : "Play";
+    const auto playIcon = QIcon::fromTheme(stoppable ? "media-playback-stop" : "media-playback-start",
+        style()->standardIcon(stoppable ? QStyle::SP_MediaStop : QStyle::SP_MediaPlay));
+    const auto playTooltip = stoppable ? "Stop this game immediately. Unsaved progress will be lost."
+                                      : "Start this game.";
+    m_play->setText(playText);
+    m_play->setIcon(playIcon);
+    m_play->setToolTip(playTooltip);
+    m_playAction->setText(playText);
+    m_playAction->setIcon(playIcon);
+    m_playAction->setToolTip(playTooltip);
     m_runFileAction->setEnabled(available && game.value("kind").toString() == "windows" && !waitingForUmu);
     for (auto *button : {m_play, m_edit, m_log}) button->setEnabled(available);
-    m_play->setEnabled(available && !waitingForUmu);
-    m_playAction->setEnabled(available && !waitingForUmu);
+    m_play->setEnabled(available && (stoppable || (!running && !waitingForUmu)));
+    // Button, context menu, Library menu and keyboard all share Play/Stop.
+    m_playAction->setEnabled(m_play->isEnabled());
     m_details->setCurrentIndex(game.isEmpty() ? 0 : 1);
     if (game.isEmpty()) return;
     m_title->setText(game.value("title").toString());
@@ -395,7 +404,12 @@ void MainWindow::removeSelected() {
 
 void MainWindow::launchSelected() {
     const auto game = selectedGame();
-    if (m_busy || game.isEmpty() || !m_playAction->isEnabled()) return;
+    if (m_busy || game.isEmpty()) return;
+    if (m_bootstrap.value("running").toArray().contains(game.value("id"))) {
+        stopSelected();
+        return;
+    }
+    if (!m_playAction->isEnabled()) return;
     setBusy(true);
     statusBar()->showMessage("Starting " + game.value("title").toString() + "…");
     launchGameWithConfirmation(m_backend, this, game.value("id").toString(), [this, game](const QJsonObject &) {
@@ -411,13 +425,10 @@ void MainWindow::launchSelected() {
 
 void MainWindow::stopSelected() {
     const auto game = selectedGame();
-    if (!m_stopAction->isEnabled() || game.isEmpty()) return;
-    QMessageBox prompt(QMessageBox::Warning, "Force-stop game",
-        "Force-stop “" + game.value("title").toString() + "” using SIGKILL?\nUnsaved progress will be lost.",
-        QMessageBox::Yes | QMessageBox::No, this);
-    prompt.setTextFormat(Qt::PlainText);
-    prompt.setDefaultButton(QMessageBox::No);
-    if (prompt.exec() != QMessageBox::Yes) return;
+    if (m_busy || game.isEmpty() || game.value("kind").toString() == "steam"
+        || !m_bootstrap.value("running").toArray().contains(game.value("id"))) return;
+    // Stop is immediate by user preference; block repeated activation while
+    // the existing profile-owned, PID-reuse-safe force-stop request runs.
     setBusy(true);
     m_backend->request("stop_game", {{"id", game.value("id")}}, [this](const QJsonObject &) {
         refresh();
@@ -449,8 +460,12 @@ void MainWindow::runFileSelected() {
 void MainWindow::pollRunning() {
     if (m_busy || m_polling || m_bootstrap.isEmpty()) return;
     m_polling = true;
-    m_backend->request("running_games", {}, [this](const QJsonObject &data) {
+    const auto generation = m_runningGeneration;
+    m_backend->request("running_games", {}, [this, generation](const QJsonObject &data) {
         m_polling = false;
+        // A poll started before Play/Stop can arrive after its refresh and
+        // otherwise replace newer launch state with an older snapshot.
+        if (m_busy || generation != m_runningGeneration) return;
         m_bootstrap.insert("running", data.value("running"));
         updateSelection();
     }, [this](const QString &) { m_polling = false; });
