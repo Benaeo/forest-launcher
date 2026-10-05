@@ -1,9 +1,10 @@
 """Optional system lsfg-vk integration; never install it or modify its configuration."""
 
+import json
 import os
 from pathlib import Path
-import shutil
-import subprocess
+import platform
+import stat
 import time
 
 from .common import BackendError, expand_path
@@ -34,18 +35,120 @@ def validate_options(value) -> dict:
     return options
 
 
-def installed() -> bool:
-    # Forest targets Arch/KDE. Query the package database, not a GUI executable
-    # (or a stale DLL/configuration left over after uninstalling the package).
-    pacman = shutil.which("pacman")
-    if not pacman:
-        return False
+MAX_LAYER_DIRECTORIES = 32
+MAX_LAYER_ENTRIES = 512
+MAX_MANIFEST_BYTES = 64 * 1024
+LAYER_SECONDS = 0.5
+LAYER_NAME = "VK_LAYER_LSFGVK_frame_generation"
+
+
+def path_list(value: str) -> list[Path]:
+    # Ignore empty/relative entries instead of searching the process CWD.
+    return [Path(item) for item in value[:32768].split(os.pathsep)[:MAX_LAYER_DIRECTORIES]
+            if item and len(item) <= 4096 and "\0" not in item and Path(item).is_absolute()]
+
+
+def layer_directories() -> list[Path]:
+    # VK_LAYER_PATH controls EXPLICIT layers, not this implicit layer.
+    if "VK_IMPLICIT_LAYER_PATH" in os.environ:
+        return path_list(os.environ["VK_IMPLICIT_LAYER_PATH"])
+    home = Path.home()
+    config = path_list(os.environ.get("XDG_CONFIG_HOME", str(home / ".config")))
+    data = path_list(os.environ.get("XDG_DATA_HOME", str(home / ".local/share")))
+    roots = [*config, *path_list(os.environ.get("XDG_CONFIG_DIRS", "/etc/xdg")),
+             Path("/etc"), Path("/usr/local/etc"), *data,
+             *path_list(os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share"))]
+    directories = [*path_list(os.environ.get("VK_ADD_IMPLICIT_LAYER_PATH", "")),
+                   *(root / "vulkan/implicit_layer.d" for root in roots)]
+    return list(dict.fromkeys(directories))[:MAX_LAYER_DIRECTORIES]
+
+
+def library_directories() -> list[Path]:
+    # Common dynamic-linker locations, not recursive home/disk discovery.
+    machine = platform.machine().lower()
+    triplet = "x86_64-linux-gnu" if machine in ("x86_64", "amd64") else "aarch64-linux-gnu"
+    defaults = [Path(base) / triplet for base in ("/lib", "/usr/lib", "/usr/local/lib")]
+    defaults += [Path(base) for base in ("/lib64", "/usr/lib64", "/lib", "/usr/lib", "/usr/local/lib")]
+    return list(dict.fromkeys([*path_list(os.environ.get("LD_LIBRARY_PATH", "")), *defaults]))[:MAX_LAYER_DIRECTORIES]
+
+
+def read_regular(path: Path, limit: int, *, whole=False) -> bytes:
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, "rb") as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or (whole and info.st_size > limit):
+            raise ValueError("Not a bounded regular file")
+        content = source.read(limit + 1 if whole else limit)
+    if whole and len(content) > limit:
+        raise ValueError("File grew beyond its read limit")
+    return content
+
+
+def compatible_library(path: Path) -> bool:
     try:
-        return subprocess.run([pacman, "-Qq", "lsfg-vk"], stdin=subprocess.DEVNULL,
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                              timeout=2, check=False).returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
+        # Shared-library symlinks are normal on Linux; resolve them, then open
+        # the final target without following a raced replacement symlink.
+        header = read_regular(path.resolve(strict=True), 64)
+        machine = platform.machine().lower()
+        expected = {"x86_64": 62, "amd64": 62, "aarch64": 183, "arm64": 183}.get(machine)
+        return (expected is not None and len(header) == 64 and header[:6] == b"\x7fELF\x02\x01"
+                and int.from_bytes(header[16:18], "little") == 3
+                and int.from_bytes(header[18:20], "little") == expected)
+    except (OSError, RuntimeError, ValueError):
         return False
+
+
+def installed() -> bool:
+    """Read-only v2-layer installation detection, independent of package managers.
+
+    Never load a library, execute a CLI/UI, or read/write lsfg configuration.
+    Installation evidence is not proof of GPU/game/runtime compatibility.
+    """
+    deadline = time.monotonic() + LAYER_SECONDS
+    entries = 0
+    for directory in layer_directories():
+        if time.monotonic() >= deadline:
+            return False
+        try:
+            with os.scandir(directory) as candidates:
+                for candidate in candidates:
+                    entries += 1
+                    if entries > MAX_LAYER_ENTRIES or time.monotonic() >= deadline:
+                        return False
+                    if not candidate.name.endswith(".json"):
+                        continue
+                    try:
+                        manifest = Path(candidate.path)
+                        document = json.loads(read_regular(manifest, MAX_MANIFEST_BYTES, whole=True))
+                        layer = document.get("layer") if isinstance(document, dict) else None
+                        if not isinstance(layer, dict) or layer.get("name") != LAYER_NAME:
+                            continue
+                        # Forest uses the v2 per-launch environment API. Do not
+                        # enable it for old layers with a different config API.
+                        if str(layer.get("implementation_version")) != "2" or layer.get("type") != "GLOBAL":
+                            continue
+                        if layer.get("library_arch", "64") != "64":
+                            continue
+                        library = layer.get("library_path")
+                        if not isinstance(library, str) or not library or len(library) > 4096 or "\0" in library:
+                            continue
+                        path = Path(library)
+                        if path.is_absolute():
+                            locations = [path]
+                        elif "/" in library:
+                            locations = [manifest.parent / path]
+                        else:
+                            locations = [root / path for root in library_directories()]
+                        for location in locations:
+                            if time.monotonic() >= deadline:
+                                return False
+                            if compatible_library(location):
+                                return time.monotonic() < deadline
+                    except (OSError, ValueError, RecursionError):
+                        continue
+        except OSError:
+            continue
+    return False
 
 
 def discover_dll(home: Path | None = None) -> dict:
