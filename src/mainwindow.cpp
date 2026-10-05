@@ -82,13 +82,15 @@ MainWindow::MainWindow(QString backendDirectory, QString dataRoot, bool smokeTes
     m_removeAction->setShortcut(QKeySequence::Delete);
     m_playAction = new QAction(icon("media-playback-start", QStyle::SP_MediaPlay), "Play", this);
     m_playAction->setShortcut(QKeySequence("Ctrl+Return"));
-    m_contextEditAction = new QAction("Edit", this);
+    m_contextEditAction = new QAction(m_editAction->icon(), "Edit", this);
     m_contextEditAction->setObjectName("contextEditAction");
+    m_contextEditAction->setIconVisibleInMenu(true);
     m_playAction->setObjectName("playAction");
     m_removeAction->setText("Remove from library");
     m_removeAction->setObjectName("removeGameAction");
-    m_runFileAction = new QAction("Run file in the prefix", this);
+    m_runFileAction = new QAction(icon("document-save-as", QStyle::SP_DialogSaveButton), "Run file in the prefix", this);
     m_runFileAction->setObjectName("runFileAction");
+    m_runFileAction->setIconVisibleInMenu(true);
     m_settingsAction = new QAction(icon("configure", QStyle::SP_FileDialogDetailedView), "Settings…", this);
     // No menu bar: keep shortcuts registered on the window even for actions
     // that now appear only in the context menu (Play/Stop and Remove).
@@ -111,16 +113,19 @@ MainWindow::MainWindow(QString backendDirectory, QString dataRoot, bool smokeTes
     help->setPopupMode(QToolButton::InstantPopup);
     auto *helpMenu = new QMenu(help);
     helpMenu->setObjectName("helpMenu");
-    auto *report = helpMenu->addAction("Report a bug or suggest a feature");
+    auto *report = helpMenu->addAction(icon("tools-report-bug", QStyle::SP_MessageBoxWarning), "Report a bug or suggest a feature");
     report->setObjectName("reportIssueAction");
+    report->setIconVisibleInMenu(true);
     connect(report, &QAction::triggered, this, [] {
         QDesktopServices::openUrl(QUrl("https://github.com/Benaeo/forest-launcher/issues"));
     });
-    auto *news = helpMenu->addAction("News");
+    auto *news = helpMenu->addAction(icon("view-financial-category-edit", QStyle::SP_FileIcon), "News");
     news->setObjectName("newsAction");
+    news->setIconVisibleInMenu(true);
     connect(news, &QAction::triggered, this, [this] { NewsDialog dialog(this); dialog.exec(); });
-    auto *about = helpMenu->addAction("About");
+    auto *about = helpMenu->addAction(icon("info", QStyle::SP_MessageBoxInformation), "About");
     about->setObjectName("aboutAction");
+    about->setIconVisibleInMenu(true);
     connect(about, &QAction::triggered, this, [this] {
         AboutDialog dialog(m_shortcutContext.value("backend").toString(), this);
         dialog.exec();
@@ -196,8 +201,10 @@ MainWindow::MainWindow(QString backendDirectory, QString dataRoot, bool smokeTes
     m_play = new QPushButton(icon("media-playback-start", QStyle::SP_MediaPlay), "Play", detail);
     m_play->setObjectName("playButton");
     m_play->setMinimumHeight(40);
-    m_edit = new QPushButton("Edit…", detail);
-    m_log = new QPushButton("Open launch log", detail);
+    m_edit = new QPushButton(m_editAction->icon(), "Edit…", detail);
+    m_edit->setObjectName("editGameButton");
+    m_log = new QPushButton(icon("text-x-log", QStyle::SP_FileDialogDetailedView), "Open launch log", detail);
+    m_log->setObjectName("openLaunchLogButton");
     buttons->addWidget(m_play);
     buttons->addWidget(m_edit);
     buttons->addStretch();

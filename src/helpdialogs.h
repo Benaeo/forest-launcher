@@ -102,6 +102,7 @@ public:
         auto *footer = new QHBoxLayout;
         auto *support = new QPushButton("Support the Project", this);
         support->setObjectName("supportProjectButton");
+        support->setIcon(QIcon::fromTheme("food", style()->standardIcon(QStyle::SP_DialogApplyButton)));
         footer->addWidget(support);
         footer->addStretch();
         auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
