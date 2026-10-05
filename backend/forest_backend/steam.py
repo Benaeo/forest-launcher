@@ -143,6 +143,31 @@ def steam_ready() -> bool:
         return False
 
 
+def steam_client_running() -> bool:
+    """Best-effort, read-only check for a live native Steam client of this user.
+
+    Unlike steam_ready() this does not require the IPC pipe, so a starting or
+    momentarily busy client still counts as running. Only the PID Steam records
+    for itself is consulted; it is validated through /proc for same-user
+    ownership and an exact "steam" process name, which rejects stale PIDs,
+    other users, steamwebhelper/game processes, and substring matches. Steam is
+    never started, stopped, restarted, or killed here.
+    """
+    try:
+        pid = int((Path.home() / ".steam/steam.pid").read_text().strip())
+    except (OSError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        if os.stat(f"/proc/{pid}").st_uid != os.getuid():
+            return False
+        with open(f"/proc/{pid}/comm", encoding="utf-8", errors="replace") as stream:
+            return stream.read(64).strip() == "steam"
+    except OSError:
+        return False
+
+
 def ensure_native_steam(timeout=60):
     if steam_ready():
         return

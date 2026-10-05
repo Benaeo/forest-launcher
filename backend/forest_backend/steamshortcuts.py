@@ -2,7 +2,9 @@
 
 Writing while Steam is running is intentional per the chosen UX. Backup and
 atomic replacement prevent partial writes, NOT Steam overwriting its in-memory
-snapshot later. Every successful sync returns an explicit restart/race notice.
+snapshot later. A successful sync that changes shortcuts returns the explicit
+restart/race notice only while a Steam client is running; otherwise the notice
+is empty because no restart is needed and nothing can overwrite the write.
 """
 import hashlib
 import json
@@ -18,7 +20,7 @@ import zlib
 from .artwork import managed_image, read_image
 from .common import BackendError
 from .shortcuts import atomic_write, GAME_ID
-from .steam import native_steam_root
+from .steam import native_steam_root, steam_client_running
 
 MAX_VDF = 16 * 1024 * 1024
 
@@ -293,6 +295,9 @@ def sync(paths, game, context=None, *, remove=False):
             recovery_assets[account][name] = combined
     record = {"accounts": sorted(set(targets + old_accounts)), "context": context, "assets": recovery_assets, "appids": {**old_appids, **appids}}
     atomic_write(manifest, json.dumps(record))
+    # A running client is checked around publication, not from cached startup
+    # state, because it is what can overwrite the freshly written snapshot.
+    steam_running = steam_client_running()
     for database, original, updated, config, writes, deletions in actions:
         if original:
             backup_root = paths.state / "steam-backups"
@@ -304,5 +309,7 @@ def sync(paths, game, context=None, *, remove=False):
         write_bytes(database, updated)
         for name, data in writes.items(): write_bytes(config / "grid" / name, data)
         for target in deletions: target.unlink(missing_ok=True)
+    steam_running = steam_running or steam_client_running()
     atomic_write(manifest, json.dumps({"accounts": targets, "context": context, "assets": {key: value for key, value in new_assets.items() if key in targets}, "appids": appids}))
+    if not steam_running: return ""
     return "Steam shortcuts updated. Restart Steam to refresh the library. If Steam was running, it may overwrite these changes; save again with Steam closed if they do not appear."
