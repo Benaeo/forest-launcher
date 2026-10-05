@@ -2,6 +2,7 @@ import shutil
 
 from .common import BackendError, Paths
 from .launch import build_plan, launch_game
+from .onlinefix import detect_support
 from .processes import running_games, stop_game
 from .prefixes import removal_info, delete_prefix
 from .prefixfiles import file_plan, run_file
@@ -71,6 +72,8 @@ class Service:
                 "umu": umu,
                 "paths": {"data": str(self.paths.data), "state": str(self.paths.state)},
             }
+        if action == "detect_online_fix":
+            return detect_support(params.get("path"))
         if action == "extract_icon":
             return {"path": artwork.cache_bytes(self.paths, extract_icon(params.get("path")))}
         if action == "import_artwork":

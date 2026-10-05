@@ -6,7 +6,7 @@ import shutil
 import subprocess
 
 from .common import BackendError, Paths, expand_path
-from .onlinefix import resolve_fake_app_id
+from .onlinefix import resolve_fake_app_id, effective_game
 from .lossless import launch_environment as lossless_environment
 from .processes import MARKER, prepare_tracking, finish_tracking, running_games
 from .steam import discover_installed_protons, discover_protons, native_steam_root, runtime_command, steam_libraries
@@ -120,6 +120,7 @@ def build_plan(game: dict, settings: dict, paths: Paths, *, prepare_components=F
 
 
 def base_plan(game: dict, settings: dict, paths: Paths, *, prepare_components=False) -> LaunchPlan:
+    game = effective_game(game)
     arguments = shlex.split(game["arguments"])
     changes = dict(game["environment"])
     log_path = paths.state / "logs" / game["id"] / "launch.log"
@@ -190,7 +191,9 @@ def launch_game(game: dict, settings: dict, paths: Paths, *, plan=None,
     plan = plan or build_plan(game, settings, paths, prepare_components=True)
     account = {}
     if plan.mode == "online-fix":
-        account = prepare_account(game, consent=steam_restart_consent)
+        # The plan re-detected capability; use its effective online-fix mode
+        # even if this profile was last saved before the INI was added.
+        account = prepare_account({**game, "tags": [*game["tags"], "online-fix"]}, consent=steam_restart_consent)
         compat_data, _ = native_prefix_layout(Path(plan.prefix), create=True)
         (compat_data / "shadercache").mkdir(exist_ok=True)
     elif plan.mode == "umu":

@@ -16,7 +16,7 @@ def file_plan(game, settings, paths, filename, *, prepare_components=False):
     if not selected.is_file():
         raise BackendError("The selected Windows file does not exist.", "missing_executable")
     # Prefix tools do not inherit game launch arguments, tool toggles, or Steam fix mode.
-    options = {**game, "path": str(selected), "arguments": "", "tags": [], "environment": {},
+    options = {**game, "path": str(selected), "arguments": "", "tags": [], "online_fix_requested": False, "environment": {},
                "mangohud": False, "prefer_sdl": False, "no_sleep": False,
                "lossless_scaling": {"multiplier": 1}}
     plan = build_plan(options, settings, paths, prepare_components=prepare_components)

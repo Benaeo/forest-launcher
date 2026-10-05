@@ -14,6 +14,7 @@ class QLabel;
 class QGridLayout;
 class QToolButton;
 class BackendClient;
+class QTimer;
 
 class GameOptionsWidget : public QWidget {
 public:
@@ -24,11 +25,13 @@ public:
     QString kind() const;
     QString protonSelection() const;
     void setKind(const QString &kind);
+    void setExecutablePath(const QString &path);
     void addGeneralOption(QWidget *option);
     void addIconControl(QWidget *control);
     QCheckBox *steamShortcutCheck() const { return m_steamShortcut; }
 private:
     void updateKind();
+    void checkOnlineFix();
     void updateLatestButton();
     void refreshProtonChoices(const QString &selection);
     void finishLatestDownload();
@@ -51,6 +54,14 @@ private:
     QLineEdit *m_arguments;
     QLineEdit *m_tags;
     QCheckBox *m_onlineFix;
+    bool m_onlineFixSupported = false;
+    QString m_onlineFixReason;
+    QString m_executablePath;
+    QString m_backendDirectory;
+    QString m_dataRoot;
+    QTimer *m_onlineFixDebounce;
+    BackendClient *m_onlineFixBackend = nullptr;
+    quint64 m_onlineFixRevision = 0;
     QCheckBox *m_mangohud;
     QCheckBox *m_preferSdl;
     QCheckBox *m_noSleep;

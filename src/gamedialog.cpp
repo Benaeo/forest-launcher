@@ -64,6 +64,7 @@ GameDialog::GameDialog(const QJsonObject &game, const QJsonObject &bootstrap, QW
     m_iconDebounce->setInterval(350);
     connect(m_iconDebounce, &QTimer::timeout, this, &GameDialog::extractInitialIcon);
     connect(m_path, &QLineEdit::textChanged, this, [this] {
+        m_options->setExecutablePath(m_path->text());
         ++m_iconRevision;
         if (m_iconBackend) { delete m_iconBackend; m_iconBackend = nullptr; }
         setIconBusy(false);
@@ -101,6 +102,7 @@ void GameDialog::updateKind() {
     m_pathLabel->setText(steam ? "Steam App ID" : "Executable");
     m_path->setPlaceholderText(steam ? "e.g. 480" : "Path to the game executable");
     m_browse->setEnabled(!steam);
+    m_options->setExecutablePath(m_path->text());
 }
 
 QJsonObject GameDialog::gameData() const {

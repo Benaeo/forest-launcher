@@ -10,6 +10,7 @@ from .steam import DEFAULT_PROTON
 from .lossless import default_options as default_lossless_options, validate_options as validate_lossless_options
 from .artwork import api_key, validate_artwork
 from .steamshortcuts import selected_accounts
+from .onlinefix import effective_game
 
 
 ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -96,6 +97,10 @@ def validate_game_options(value: dict) -> dict:
         options["environment"] = {}
         options.update(dict.fromkeys(LAUNCH_TOGGLES, False))
         options["lossless_scaling"]["multiplier"] = 1
+    if "online_fix_requested" in value:
+        if type(value["online_fix_requested"]) is not bool:
+            raise BackendError("Online-fix preference must be true or false.")
+        options["online_fix_requested"] = value["online_fix_requested"]
     return options
 
 
@@ -172,6 +177,8 @@ class Store:
             if combined["kind"] != "windows" and "tags" not in value:
                 combined["tags"] = [tag for tag in combined["tags"] if tag != "online-fix"]
             game = validate_game(combined)
+            game["online_fix_requested"] = combined.get("online_fix_requested", "online-fix" in game["tags"])
+            game = effective_game(game)
             game_id = str(uuid4())
             if game["kind"] == "windows":
                 if not game["prefix"]:
@@ -181,6 +188,9 @@ class Store:
         else:
             previous = self.get_game(game_id)
             game = validate_game(value)
+            if "online_fix_requested" not in value and "online_fix_requested" in previous:
+                game["online_fix_requested"] = previous["online_fix_requested"]
+            game = effective_game(game)
             if "lossless_scaling" not in value and "lossless_scaling" not in previous:
                 game.pop("lossless_scaling")
             if game["kind"] == "windows" and not game["prefix"] and (previous["prefix"] or previous["kind"] != "windows"):
@@ -202,7 +212,7 @@ class Store:
                 raise BackendError("Steam library games do not need an additional Steam shortcut.")
         launch_account = value.get("steam_launch_account", previous.get("steam_launch_account", "") if not creating else "")
         game["steam_launch_account"] = ""
-        if "online-fix" in game["tags"]:
+        if game.get("online_fix_requested", "online-fix" in game["tags"]):
             game["steam_launch_account"] = selected_accounts([launch_account])[0] if launch_account != "" else ""
             if game["steam_launch_account"] and not 0 < int(game["steam_launch_account"]) <= 0xFFFFFFFF:
                 raise BackendError("Choose a valid Steam launch account.")

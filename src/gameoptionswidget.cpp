@@ -29,6 +29,7 @@
 #include <QToolButton>
 #include <QMouseEvent>
 #include <QKeyEvent>
+#include <QTimer>
 
 namespace {
 // Account selection is multi-select: activating a checkable row must not
@@ -93,6 +94,8 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     prefixRow->addWidget(m_prefixBrowse);
     const auto frontend = bootstrap.value("frontend").toObject();
     const auto dataRoot = frontend.value("data_root").toString();
+    m_backendDirectory = frontend.value("backend").toString();
+    m_dataRoot = dataRoot;
     m_runnerRoot = dataRoot.isEmpty() ? QDir::homePath() + "/.local/share/Steam/compatibilitytools.d"
                                     : dataRoot + "/compatibilitytools.d";
     m_proton = new ElidingComboBox(this);
@@ -121,7 +124,12 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     m_onlineFix = new QCheckBox("online-fix - Steam", this);
     m_onlineFix->setObjectName("onlineFixCheck");
     m_onlineFix->setToolTip("Use native Steam and Proton with the [Main] FakeAppId from OnlineFix.ini or SteamFix.ini beside the game executable. A valid INI is required. No game files are changed.");
-    m_onlineFix->setChecked(options.value("tags").toArray().contains("online-fix"));
+    m_onlineFix->setChecked(options.contains("online_fix_requested")
+        ? options.value("online_fix_requested").toBool() : options.value("tags").toArray().contains("online-fix"));
+    m_onlineFixDebounce = new QTimer(this);
+    m_onlineFixDebounce->setSingleShot(true);
+    m_onlineFixDebounce->setInterval(200);
+    connect(m_onlineFixDebounce, &QTimer::timeout, this, &GameOptionsWidget::checkOnlineFix);
     m_mangohud = new QCheckBox("MangoHud", this);
     m_mangohud->setObjectName("mangohudCheck");
     m_mangohud->setChecked(options.value("mangohud").toBool());
@@ -415,6 +423,51 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
         if (!path.isEmpty()) m_prefix->setText(path);
     });
     updateKind();
+    if (!defaultsEditor) setExecutablePath(options.value("path").toString());
+}
+
+void GameOptionsWidget::setExecutablePath(const QString &path) {
+    if (m_defaultsEditor) return;
+    ++m_onlineFixRevision;
+    m_executablePath = path.trimmed();
+    m_onlineFixSupported = false;
+    m_onlineFixReason = m_executablePath.isEmpty() || m_backendDirectory.isEmpty()
+        ? "Choose a Windows executable with a valid [Main] FakeAppId in OnlineFix.ini or SteamFix.ini beside it."
+        : "Checking Steam online-fix support beside the selected executable…";
+    m_onlineFixDebounce->stop();
+    if (m_onlineFixBackend) {
+        m_onlineFixBackend->deleteLater();
+        m_onlineFixBackend = nullptr;
+    }
+    updateKind();
+    m_onlineFixDebounce->start();
+}
+
+void GameOptionsWidget::checkOnlineFix() {
+    if (m_defaultsEditor) return;
+    if (kind() != "windows" || m_executablePath.isEmpty() || m_backendDirectory.isEmpty()) {
+        m_onlineFixReason = "Choose a Windows executable with a valid Steam OnlineFix.ini or SteamFix.ini beside it.";
+        updateKind();
+        return;
+    }
+    const auto revision = m_onlineFixRevision;
+    auto *client = new BackendClient(m_backendDirectory, m_dataRoot, this);
+    m_onlineFixBackend = client;
+    client->request("detect_online_fix", {{"path", m_executablePath}}, [this, revision, client](const QJsonObject &data) {
+        client->deleteLater();
+        if (m_onlineFixBackend == client) m_onlineFixBackend = nullptr;
+        if (revision != m_onlineFixRevision) return;
+        m_onlineFixSupported = data.value("supported").toBool();
+        m_onlineFixReason = data.value("reason").toString();
+        updateKind();
+    }, [this, revision, client](const QString &error) {
+        client->deleteLater();
+        if (m_onlineFixBackend == client) m_onlineFixBackend = nullptr;
+        if (revision != m_onlineFixRevision) return;
+        m_onlineFixSupported = false;
+        m_onlineFixReason = error;
+        updateKind();
+    });
 }
 
 QString GameOptionsWidget::kind() const { return m_kind->currentData().toString(); }
@@ -500,7 +553,12 @@ void GameOptionsWidget::updateKind() {
     m_prefix->setEnabled(windows);
     m_prefixBrowse->setEnabled(windows);
     m_proton->setEnabled(windows);
-    m_onlineFix->setEnabled(windows);
+    m_onlineFix->setEnabled(windows && (m_defaultsEditor || m_onlineFixSupported));
+    m_onlineFix->setToolTip(m_defaultsEditor
+        ? "Prefer Steam online-fix for new games only when a valid Steam configuration is detected beside their executable."
+        : m_onlineFix->isEnabled()
+            ? "Steam online-fix support detected in OnlineFix.ini or SteamFix.ini. Uses the configured FakeAppId without changing game files."
+            : m_onlineFixReason + "\nThe saved checkmark is preserved; unsupported games do not use Steam online-fix mode.");
     m_environment->setEnabled(kind() != "steam");
     m_mangohud->setEnabled(kind() != "steam");
     m_preferSdl->setEnabled(windows);
@@ -519,7 +577,6 @@ void GameOptionsWidget::updateKind() {
         m_mangohud->setChecked(false);
         m_noSleep->setChecked(false);
     }
-    if (!windows) m_onlineFix->setChecked(false);
     updateLatestButton();
 }
 
@@ -529,7 +586,8 @@ QJsonObject GameOptionsWidget::optionsData() const {
         const auto value = tag.trimmed().toLower();
         if (!value.isEmpty() && value != "online-fix" && !tags.contains(value)) tags.append(value);
     }
-    if (m_onlineFix->isEnabled() && m_onlineFix->isChecked()) tags.append("online-fix");
+    if (kind() == "windows" && m_onlineFix->isChecked() && (m_defaultsEditor || m_onlineFixSupported))
+        tags.append("online-fix");
     QJsonObject result{
         {"kind", kind()},
         {"prefix", kind() == "windows" ? m_prefix->text().trimmed() : QString()},
@@ -543,15 +601,16 @@ QJsonObject GameOptionsWidget::optionsData() const {
         {"environment", m_environment->isEnabled() ? m_environment->toPlainText() : QString()},
     };
     if (!m_defaultsEditor) {
+        result.insert("online_fix_requested", m_onlineFix->isChecked());
         result.insert("steam_shortcut", m_steamShortcut->isChecked() && kind() != "steam");
         QJsonArray accounts;
         for (auto *action : m_steamAccountsButton->menu()->actions())
             if (action->isChecked()) accounts.append(action->data().toString());
         result.insert("steam_accounts", accounts);
         QString launchAccount;
-        // Keep the draft choice when toggling off/on, but never submit an
-        // account requirement for a non-online-fix/native/Steam profile.
-        if (m_onlineFix->isEnabled() && m_onlineFix->isChecked())
+        // Preserve the account alongside the preference even when detection
+        // disables the checkbox. It is used only by an effective Steam launch.
+        if (m_onlineFix->isChecked())
             for (auto *action : m_steamLaunchAccountButton->menu()->actions())
                 if (action->isChecked()) launchAccount = action->data().toString();
         result.insert("steam_launch_account", launchAccount);
