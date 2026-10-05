@@ -11,7 +11,8 @@ from .storage import Store
 from .shortcuts import Shortcuts
 from . import artwork
 from .icons import extract_icon
-from .steamshortcuts import accounts as steam_accounts, sync as sync_steam_shortcuts
+from .steamshortcuts import accounts as steam_accounts, sync as sync_steam_shortcuts, steam_root as shortcut_steam_root
+from .steamaccount import remembered_accounts, SteamRestartRequired
 from .proton import list_releases, download_version, download_latest, cleanup_downloads, install_root
 from .umu import UMUManager
 from .lossless import installed as lsfg_installed, discover_dll, MISSING_PACKAGE
@@ -52,9 +53,17 @@ class Service:
             cleanup_downloads(self.paths)
             settings = self.store.get_settings()
             umu = UMUManager(self.paths).status()
+            account_error = ""
+            try:
+                switchable_accounts = remembered_accounts(shortcut_steam_root(self.paths))
+            except BackendError as error:
+                switchable_accounts = []
+                account_error = str(error)
             return {
                 "games": self.store.list_games(), "settings": settings,
                 "steam_accounts": steam_accounts(self.paths),
+                "steam_switchable_accounts": switchable_accounts,
+                "steam_account_error": account_error,
                 "running": running_games(self.paths),
                 "protons": discover_protons(native_steam_root(), directory=install_root(self.paths)),
                 "capabilities": {"umu": umu["path"], "steam": shutil.which("steam") or "",
@@ -140,7 +149,17 @@ class Service:
             settings = self.store.get_settings()
             if action == "preview_launch":
                 return build_plan(game, settings, self.paths).public()
-            result = launch_game(game, settings, self.paths)
+            consent = params.get("steam_restart_consent")
+            if consent is not None and (not isinstance(consent, dict)
+                    or set(consent) != {"account", "session"}
+                    or not all(isinstance(value, str) for value in consent.values())):
+                raise BackendError("Steam restart consent must identify the account and Steam session.")
+            try:
+                result = launch_game(game, settings, self.paths, steam_restart_consent=consent)
+            except SteamRestartRequired as required:
+                # No process was spawned and no launch timestamp is recorded.
+                # End this request/lock before the frontend opens its dialog.
+                return {"steam_restart_confirmation": required.confirmation}
             self.store.mark_launched(game["id"])
             return result
         raise BackendError(f"Unknown backend action: {action!r}")

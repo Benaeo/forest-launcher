@@ -103,7 +103,10 @@ void BackendClient::request(const QString &action, const QJsonObject &params, Su
         failure("The backend request timed out. Check your connection or Steam and try again.");
         process->deleteLater();
     });
-    deadline->start((action == "download_proton" || action == "download_latest_proton") ? 3600000 : action == "prepare_umu" || action == "launch_game" ? 120000 : 90000);
+    // Account switching has one 105-second backend budget. Leave headroom
+    // for planning/IPC; user confirmation runs between requests, not on this timer.
+    deadline->start((action == "download_proton" || action == "download_latest_proton") ? 3600000
+                    : action == "launch_game" ? 180000 : action == "prepare_umu" ? 120000 : 90000);
     const auto python = QStandardPaths::findExecutable("python3");
     process->start(python.isEmpty() ? "python3" : python, arguments);
 }

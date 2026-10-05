@@ -9,7 +9,8 @@ from .common import BackendError, Paths, expand_path
 from .onlinefix import resolve_fake_app_id
 from .lossless import launch_environment as lossless_environment
 from .processes import MARKER, prepare_tracking, finish_tracking
-from .steam import discover_installed_protons, discover_protons, ensure_native_steam, native_steam_root, runtime_command, steam_libraries
+from .steam import discover_installed_protons, discover_protons, native_steam_root, runtime_command, steam_libraries
+from .steamaccount import prepare_account
 from .umu import ensure_umu, find_umu
 
 
@@ -180,10 +181,12 @@ def base_plan(game: dict, settings: dict, paths: Paths, *, prepare_components=Fa
                       changes, str(executable.parent), log_path, str(prefix), "online-fix")
 
 
-def launch_game(game: dict, settings: dict, paths: Paths, *, plan=None) -> dict:
+def launch_game(game: dict, settings: dict, paths: Paths, *, plan=None,
+                steam_restart_consent=None) -> dict:
     plan = plan or build_plan(game, settings, paths, prepare_components=True)
+    account = {}
     if plan.mode == "online-fix":
-        ensure_native_steam()
+        account = prepare_account(game, consent=steam_restart_consent)
         compat_data, _ = native_prefix_layout(Path(plan.prefix), create=True)
         (compat_data / "shadercache").mkdir(exist_ok=True)
     elif plan.mode == "umu":
@@ -210,4 +213,5 @@ def launch_game(game: dict, settings: dict, paths: Paths, *, plan=None) -> dict:
             raise
         if tracking:
             finish_tracking(tracking, record, process.pid)
-    return {**plan.public(), "pid": process.pid, "game_id": game["id"]}
+    return {**plan.public(), "pid": process.pid, "game_id": game["id"],
+            "steam_account": account.get("account") if plan.mode == "online-fix" else None}

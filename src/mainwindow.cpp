@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "backendclient.h"
+#include "launchconfirmation.h"
 #include "gamedialog.h"
 #include "settingsdialog.h"
 #include "removegamedialog.h"
@@ -397,14 +398,15 @@ void MainWindow::launchSelected() {
     if (m_busy || game.isEmpty() || !m_playAction->isEnabled()) return;
     setBusy(true);
     statusBar()->showMessage("Starting " + game.value("title").toString() + "…");
-    m_backend->request("launch_game", {{"id", game.value("id")}}, [this, game](const QJsonObject &) {
+    launchGameWithConfirmation(m_backend, this, game.value("id").toString(), [this, game](const QJsonObject &) {
         if (m_bootstrap.value("settings").toObject().value("close_after_launch").toBool()) {
             close();
             return;
         }
         refresh(game.value("id").toString());
         statusBar()->showMessage("Launch started.", 5000);
-    }, [this](const QString &error) { setBusy(false); statusBar()->showMessage("Launch failed."); showError(error); });
+    }, [this](const QString &error) { setBusy(false); statusBar()->showMessage("Launch failed."); showError(error); },
+       [this] { setBusy(false); statusBar()->showMessage("Launch cancelled. Steam was not changed.", 5000); });
 }
 
 void MainWindow::stopSelected() {

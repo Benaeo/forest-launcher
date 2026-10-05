@@ -4,6 +4,7 @@
 #include "elidingcombobox.h"
 #include "losslessdialog.h"
 
+#include <QActionGroup>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
@@ -145,7 +146,7 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     auto *steamShortcut = m_steamShortcut;
     steamShortcut->setObjectName("steamShortcutCheck");
     steamShortcut->setChecked(options.value("steam_shortcut").toBool());
-    steamShortcut->setToolTip("Write a Forest shortcut and selected artwork for the checked accounts. Restart Steam to refresh its library; Forest never stops Steam.");
+    steamShortcut->setToolTip("Write a Forest shortcut and selected artwork for the checked accounts. Restart Steam to refresh its library; writing shortcuts never stops Steam.");
     m_steamAccountsButton = new QToolButton(this);
     m_steamAccountsButton->setObjectName("steamAccountsButton");
     m_steamAccountsButton->setText("Accounts");
@@ -174,6 +175,44 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     m_steamAccountsButton->setVisible(!defaultsEditor);
     connect(steamShortcut, &QCheckBox::toggled, this, [this](bool checked) { m_steamAccountsButton->setEnabled(checked && !m_defaultsEditor); });
     m_steamAccountsButton->setEnabled(steamShortcut->isChecked() && !defaultsEditor);
+    m_steamLaunchAccountButton = new QToolButton(this);
+    m_steamLaunchAccountButton->setObjectName("steamLaunchAccountButton");
+    m_steamLaunchAccountButton->setVisible(!defaultsEditor);
+    m_steamLaunchAccountButton->setText("Account");
+    m_steamLaunchAccountButton->setPopupMode(QToolButton::InstantPopup);
+    auto *launchAccountMenu = new QMenu(m_steamLaunchAccountButton);
+    m_steamLaunchAccountButton->setMenu(launchAccountMenu);
+    auto *launchAccountGroup = new QActionGroup(launchAccountMenu);
+    launchAccountGroup->setExclusive(true);
+    auto *anyAccount = launchAccountMenu->addAction("Any account");
+    anyAccount->setCheckable(true);
+    anyAccount->setData(QString());
+    launchAccountGroup->addAction(anyAccount);
+    const auto switchable = bootstrap.value(bootstrap.contains("steam_switchable_accounts")
+        ? "steam_switchable_accounts" : "steam_accounts").toArray();
+    const auto wantedAccount = options.value("steam_launch_account").toString();
+    QAction *checkedAccount = nullptr;
+    for (const auto &value : switchable) {
+        const auto account = value.toObject();
+        const auto identity = account.value("id").toString();
+        auto *action = launchAccountMenu->addAction(account.value("name").toString() + " (" + identity + ")");
+        action->setCheckable(true);
+        action->setData(identity);
+        launchAccountGroup->addAction(action);
+        if (!identity.isEmpty() && identity == wantedAccount) checkedAccount = action;
+    }
+    if (!wantedAccount.isEmpty() && !checkedAccount) {
+        checkedAccount = launchAccountMenu->addAction("Unavailable account (" + wantedAccount + ")");
+        checkedAccount->setCheckable(true);
+        checkedAccount->setData(wantedAccount);
+        checkedAccount->setToolTip("This game still requires this account. Sign in to it through Steam, or explicitly choose another account.");
+        launchAccountGroup->addAction(checkedAccount);
+    }
+    (checkedAccount ? checkedAccount : anyAccount)->setChecked(true);
+    auto accountTooltip = QString("Online-fix games only. Requires “Remember password” for switching. Forest asks before restarting an open Steam client. Any account uses whichever account is signed in.");
+    const auto accountError = bootstrap.value("steam_account_error").toString();
+    if (!accountError.isEmpty()) accountTooltip += "\n" + accountError;
+    m_steamLaunchAccountButton->setToolTip(accountTooltip);
     QGroupBox *generalOptions = nullptr;
     QHBoxLayout *tools = nullptr;
     if (defaultsEditor) {
@@ -291,7 +330,11 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
         m_launchTail = new QGridLayout(tail);
         m_launchTail->setContentsMargins(0, 0, 0, 0);
         m_launchTail->setColumnStretch(1, 1);
-        m_launchTail->addWidget(m_onlineFix, 0, 1);
+        auto *onlineFixRow = new QHBoxLayout;
+        onlineFixRow->addWidget(m_onlineFix);
+        onlineFixRow->addWidget(m_steamLaunchAccountButton);
+        onlineFixRow->addStretch();
+        m_launchTail->addLayout(onlineFixRow, 0, 1);
         m_launchTail->addWidget(new QLabel("Tools", tail), 1, 0);
         m_launchTail->addLayout(tools, 1, 1);
         auto *shortcuts = new QHBoxLayout;
@@ -331,6 +374,9 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
         layout->addWidget(tabs);
     }
     connect(m_kind, &QComboBox::currentIndexChanged, this, [this] { updateKind(); });
+    connect(m_onlineFix, &QCheckBox::toggled, this, [this] {
+        m_steamLaunchAccountButton->setEnabled(m_onlineFix->isEnabled() && m_onlineFix->isChecked() && !m_defaultsEditor);
+    });
     connect(m_prefixBrowse, &QPushButton::clicked, this, [this] {
         const auto path = QFileDialog::getExistingDirectory(this, "Choose Wine prefix", m_prefix->text());
         if (!path.isEmpty()) m_prefix->setText(path);
@@ -429,6 +475,7 @@ void GameOptionsWidget::updateKind() {
     m_steamShortcut->setEnabled(!m_defaultsEditor && m_hasSteamAccounts && kind() != "steam");
     if (kind() == "steam") m_steamShortcut->setChecked(false);
     m_steamAccountsButton->setEnabled(m_steamShortcut->isChecked() && !m_defaultsEditor);
+    m_steamLaunchAccountButton->setEnabled(m_onlineFix->isEnabled() && m_onlineFix->isChecked() && !m_defaultsEditor);
     m_losslessButton->setEnabled(m_lsfgInstalled && kind() != "steam");
     m_losslessButton->setToolTip(!m_lsfgInstalled
         ? "Install the missing package lsfg-vk to use this feature."
@@ -468,6 +515,13 @@ QJsonObject GameOptionsWidget::optionsData() const {
         for (auto *action : m_steamAccountsButton->menu()->actions())
             if (action->isChecked()) accounts.append(action->data().toString());
         result.insert("steam_accounts", accounts);
+        QString launchAccount;
+        // Keep the draft choice when toggling off/on, but never submit an
+        // account requirement for a non-online-fix/native/Steam profile.
+        if (m_onlineFix->isEnabled() && m_onlineFix->isChecked())
+            for (auto *action : m_steamLaunchAccountButton->menu()->actions())
+                if (action->isChecked()) launchAccount = action->data().toString();
+        result.insert("steam_launch_account", launchAccount);
     }
     if (!m_losslessOptions.isEmpty()) {
         auto lossless = m_losslessOptions;

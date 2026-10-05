@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "backendclient.h"
+#include "launchconfirmation.h"
 
 #include <QApplication>
 #include <QCommandLineParser>
@@ -66,19 +67,21 @@ int main(int argc, char **argv) {
         const bool preview = parser.isSet("preview-launch");
         const auto id = parser.value(preview ? "preview-launch" : "launch");
         QTimer::singleShot(0, &client, [&client, &app, preview, id] {
-            client.request(preview ? "preview_launch" : "launch_game", {{"id", id}},
-                [&app, preview](const QJsonObject &data) {
-                    if (preview) QTextStream(stdout) << QJsonDocument(data).toJson(QJsonDocument::Indented);
-                    app.exit(0);
-                }, [&app, preview](const QString &error) {
-                    QTextStream(stderr) << error << '\n';
-                    if (!preview) {
-                        QMessageBox message(QMessageBox::Critical, "Forest launch failed", error, QMessageBox::Close);
-                        message.setTextFormat(Qt::PlainText);
-                        message.exec();
-                    }
-                    app.exit(1);
-                });
+            const auto success = [&app, preview](const QJsonObject &data) {
+                if (preview) QTextStream(stdout) << QJsonDocument(data).toJson(QJsonDocument::Indented);
+                app.exit(0);
+            };
+            const auto failure = [&app, preview](const QString &error) {
+                QTextStream(stderr) << error << '\n';
+                if (!preview) {
+                    QMessageBox message(QMessageBox::Critical, "Forest launch failed", error, QMessageBox::Close);
+                    message.setTextFormat(Qt::PlainText);
+                    message.exec();
+                }
+                app.exit(1);
+            };
+            if (preview) client.request("preview_launch", {{"id", id}}, success, failure);
+            else launchGameWithConfirmation(&client, nullptr, id, success, failure, [&app] { app.exit(0); });
         });
         return app.exec();
     }

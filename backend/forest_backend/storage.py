@@ -200,6 +200,12 @@ class Store:
                 raise BackendError("Select at least one Steam account for the shortcut.")
             if selected and game["kind"] == "steam":
                 raise BackendError("Steam library games do not need an additional Steam shortcut.")
+        launch_account = value.get("steam_launch_account", previous.get("steam_launch_account", "") if not creating else "")
+        game["steam_launch_account"] = ""
+        if "online-fix" in game["tags"]:
+            game["steam_launch_account"] = selected_accounts([launch_account])[0] if launch_account != "" else ""
+            if game["steam_launch_account"] and not 0 < int(game["steam_launch_account"]) <= 0xFFFFFFFF:
+                raise BackendError("Choose a valid Steam launch account.")
         document = json.dumps(game, ensure_ascii=False)
         with self.connection:
             if not creating:

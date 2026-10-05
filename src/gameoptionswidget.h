@@ -58,6 +58,7 @@ private:
     QCheckBox *m_appMenuShortcut;
     QCheckBox *m_steamShortcut;
     QToolButton *m_steamAccountsButton;
+    QToolButton *m_steamLaunchAccountButton;
     QGridLayout *m_launchTail = nullptr;
     bool m_defaultsEditor = false;
     bool m_hasSteamAccounts = false;
