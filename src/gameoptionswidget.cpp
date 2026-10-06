@@ -32,6 +32,10 @@
 #include <QTimer>
 
 namespace {
+bool isZeroSteamAccount(const QString &identity) {
+    return !identity.isEmpty() && identity.count(QLatin1Char('0')) == identity.size();
+}
+
 // Account selection is multi-select: activating a checkable row must not
 // dismiss the popup. Keep normal QMenu handling for dismissal and navigation.
 class SteamAccountsMenu final : public QMenu {
@@ -166,6 +170,7 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     const auto selectedAccounts = options.value("steam_accounts").toArray();
     for (const auto &value : bootstrap.value("steam_accounts").toArray()) {
         const auto account = value.toObject();
+        if (isZeroSteamAccount(account.value("id").toString())) continue;
         auto *action = accountMenu->addAction(account.value("name").toString() + " (" + account.value("id").toString() + ")");
         action->setCheckable(true);
         action->setData(account.value("id").toString());
@@ -174,6 +179,7 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     }
     m_hasSteamAccounts = !accountMenu->actions().isEmpty();
     for (const auto &identity : selectedAccounts) {
+        if (isZeroSteamAccount(identity.toString())) continue;
         bool found = false;
         for (auto *action : accountMenu->actions()) found |= action->data().toString() == identity.toString();
         if (!found) {
@@ -216,11 +222,13 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     launchAccountGroup->addAction(anyAccount);
     const auto switchable = bootstrap.value(bootstrap.contains("steam_switchable_accounts")
         ? "steam_switchable_accounts" : "steam_accounts").toArray();
-    const auto wantedAccount = options.value("steam_launch_account").toString();
+    const auto savedAccount = options.value("steam_launch_account").toString();
+    const auto wantedAccount = isZeroSteamAccount(savedAccount) ? QString() : savedAccount;
     QAction *checkedAccount = nullptr;
     for (const auto &value : switchable) {
         const auto account = value.toObject();
         const auto identity = account.value("id").toString();
+        if (isZeroSteamAccount(identity)) continue;
         auto *action = launchAccountMenu->addAction(account.value("name").toString() + " (" + identity + ")");
         action->setCheckable(true);
         action->setData(identity);

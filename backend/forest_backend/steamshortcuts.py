@@ -116,7 +116,9 @@ def accounts(paths):
     try:
         for index, entry in enumerate(directory.iterdir()):
             if index >= 256: break
-            if re.fullmatch(r"[0-9]{1,10}", entry.name) and entry.is_dir() and not entry.is_symlink():
+            # userdata/0 is not a selectable signed-in Steam account.
+            if (re.fullmatch(r"[0-9]{1,10}", entry.name) and int(entry.name) > 0
+                    and entry.is_dir() and not entry.is_symlink()):
                 result.append({"id": entry.name, "name": names.get(entry.name, "Steam account " + entry.name)})
     except OSError: pass
     return sorted(result, key=lambda account: account["name"].casefold())
