@@ -9,30 +9,15 @@
 #include <QIcon>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QPlainTextEdit>
+#include <QTextBrowser>
+#include <QRegularExpression>
+#include "newsdialog.h"
 #include <QPushButton>
 #include <QScrollArea>
 #include <QStyle>
 #include <QTabWidget>
 #include <QUrl>
 #include <QVBoxLayout>
-
-class NewsDialog final : public QDialog {
-public:
-    explicit NewsDialog(QWidget *parent = nullptr) : QDialog(parent) {
-        setObjectName("newsDialog");
-        setWindowTitle("News — Forest Launcher");
-        resize(620, 440);
-        auto *layout = new QVBoxLayout(this);
-        auto *news = new QPlainTextEdit(this);
-        news->setObjectName("newsText");
-        news->setReadOnly(true);
-        layout->addWidget(news);
-        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
-        layout->addWidget(buttons);
-        connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    }
-};
 
 class AboutDialog final : public QDialog {
 public:
@@ -88,12 +73,18 @@ public:
         auto *fileLink = new QLabel("<a href=\"" + QUrl::fromLocalFile(m_licensePath).toString(QUrl::FullyEncoded).toHtmlEscaped()
                                    + "\">LICENSE</a>", licensePage);
         fileLink->setObjectName("licenseFileLink");
+        fileLink->setAlignment(Qt::AlignCenter);
         fileLink->setTextInteractionFlags(Qt::TextBrowserInteraction);
         fileLink->setOpenExternalLinks(false);
         licenseLayout->addWidget(fileLink);
-        m_license = new QPlainTextEdit(licensePage);
+        m_license = new QTextBrowser(licensePage);
         m_license->setObjectName("licenseText");
-        m_license->setReadOnly(true);
+        m_license->setOpenLinks(false);
+        m_license->setFrameShape(QFrame::NoFrame);
+        m_license->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        m_license->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        m_license->document()->setDocumentMargin(16);
+        m_license->document()->setDefaultStyleSheet("p { text-align: left; line-height: 125%; }");
         licenseLayout->addWidget(m_license);
         connect(fileLink, &QLabel::linkActivated, this, [this](const QString &) { readLicense(); });
         readLicense();
@@ -114,8 +105,30 @@ public:
 private:
     void readLicense() {
         QFile file(m_licensePath);
-        m_license->setPlainText(file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString());
+        if (!file.open(QIODevice::ReadOnly)) {
+            m_license->setPlainText("The local LICENSE file could not be opened.");
+            return;
+        }
+        // Reflow only the display; never edit or replace the official LICENSE.
+        const auto original = QString::fromUtf8(file.readAll());
+        QString html;
+        for (const auto &paragraph : original.split(QRegularExpression("\\n[ \\t]*\\n"))) {
+            QString text = paragraph.trimmed();
+            if (text.isEmpty()) continue;
+            text.replace(QRegularExpression("[ \\t]*\\n[ \\t]*"), " ");
+            if (text.startsWith("GNU GENERAL PUBLIC LICENSE")) {
+                html += "<h3 align=\"center\">GNU GENERAL PUBLIC LICENSE</h3>"
+                        "<p align=\"center\">Version 3, 29 June 2007</p>";
+            } else if (text == "Preamble" || text == "TERMS AND CONDITIONS"
+                       || text == "END OF TERMS AND CONDITIONS"
+                       || text == "How to Apply These Terms to Your New Programs") {
+                html += "<h3 align=\"center\">" + text.toHtmlEscaped() + "</h3>";
+            } else {
+                html += "<p>" + text.toHtmlEscaped() + "</p>";
+            }
+        }
+        m_license->setHtml(html);
     }
     QString m_licensePath;
-    QPlainTextEdit *m_license;
+    QTextBrowser *m_license;
 };

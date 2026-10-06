@@ -10,7 +10,7 @@ from .operations import library_operation
 from .steam import discover_protons, native_steam_root
 from .storage import Store
 from .shortcuts import Shortcuts
-from . import artwork
+from . import artwork, news
 from .icons import extract_icon
 from .steamshortcuts import accounts as steam_accounts, sync as sync_steam_shortcuts, steam_root as shortcut_steam_root
 from .steamaccount import remembered_accounts, SteamRestartRequired
@@ -88,6 +88,10 @@ class Service:
             if not lsfg_installed():
                 raise BackendError(MISSING_PACKAGE, "missing_lsfg_vk")
             return discover_dll()
+        if action == "news_releases":
+            return news.releases(params.get("page", 1))
+        if action == "news_images":
+            return news.images(params.get("urls"))
         if action == "proton_releases":
             return list_releases(self.paths, params.get("family"), params.get("page", 1))
         if action == "download_latest_proton":

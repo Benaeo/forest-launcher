@@ -122,7 +122,10 @@ MainWindow::MainWindow(QString backendDirectory, QString dataRoot, bool smokeTes
     auto *news = helpMenu->addAction(icon("view-financial-category-edit", QStyle::SP_FileIcon), "News");
     news->setObjectName("newsAction");
     news->setIconVisibleInMenu(true);
-    connect(news, &QAction::triggered, this, [this] { NewsDialog dialog(this); dialog.exec(); });
+    connect(news, &QAction::triggered, this, [this] {
+        NewsDialog dialog(m_shortcutContext.value("backend").toString(), m_dataRoot, this);
+        dialog.exec();
+    });
     auto *about = helpMenu->addAction(icon("info", QStyle::SP_MessageBoxInformation), "About");
     about->setObjectName("aboutAction");
     about->setIconVisibleInMenu(true);
