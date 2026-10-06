@@ -88,13 +88,17 @@ class LaunchPlan:
     log_path: Path
     prefix: str = ""
     mode: str = "native"
+    unset_environment: tuple[str, ...] = ()
 
     def public(self) -> dict:
-        return {
+        result = {
             "command": self.command, "environment": self.environment,
             "cwd": self.cwd, "log_path": str(self.log_path),
             "prefix": self.prefix, "mode": self.mode,
         }
+        if self.unset_environment:
+            result["unset_environment"] = list(self.unset_environment)
+        return result
 
 
 def build_plan(game: dict, settings: dict, paths: Paths, *, prepare_components=False) -> LaunchPlan:
@@ -107,6 +111,11 @@ def build_plan(game: dict, settings: dict, paths: Paths, *, prepare_components=F
                                "missing_inhibitor")
     plan = base_plan(game, settings, paths, prepare_components=prepare_components)
     plan.environment.update(lossless)
+    if lossless.get("LSFGVK_ENV") == "1":
+        # Removing only the game override is insufficient: the launcher may
+        # also inherit this disable flag. Record removal for the child env.
+        plan.environment.pop("DISABLE_LSFGVK", None)
+        plan.unset_environment = ("DISABLE_LSFGVK",)
     if game["kind"] != "steam":
         if game.get("mangohud", False):
             plan.environment["MANGOHUD"] = "1"
@@ -199,6 +208,8 @@ def launch_game(game: dict, settings: dict, paths: Paths, *, plan=None,
     elif plan.mode == "umu":
         Path(plan.prefix).mkdir(parents=True, exist_ok=True)
     environment = {**os.environ, **plan.environment}
+    for key in plan.unset_environment:
+        environment.pop(key, None)
     if plan.mode == "online-fix":
         environment.pop("UMU_ID", None)
     plan.log_path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)

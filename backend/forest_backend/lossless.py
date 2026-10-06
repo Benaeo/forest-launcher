@@ -206,7 +206,9 @@ def launch_environment(game: dict) -> dict[str, str]:
     if dll.name.casefold() != "lsfg-vk.dll":
         raise BackendError("Lossless Scaling location must point to lsfg-vk.dll, not Lossless.dll.",
                            "invalid_lossless_dll")
-    return {"DISABLE_LSFGVK": "0", "LSFGVK_ENV": "1", "LSFGVK_DLL_PATH": str(dll),
+    # The loader disables an implicit layer for ANY non-empty disable value,
+    # including "0". build_plan must unset DISABLE_LSFGVK in the child instead.
+    return {"LSFGVK_ENV": "1", "LSFGVK_DLL_PATH": str(dll),
             "LSFGVK_MULTIPLIER": str(options["multiplier"]),
             "LSFGVK_FLOW_SCALE": format(options["flow_scale"] / 100, ".2f"),
             "LSFGVK_PERFORMANCE_MODE": "1" if options["performance_mode"] else "0"}
