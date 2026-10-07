@@ -276,6 +276,7 @@ class Store:
             "default_proton": DEFAULT_PROTON,
             "close_after_launch": False,
             "steamgriddb_api_key": "",
+            "default_icon_source": "extracted",
             "new_game_defaults": default_game_options(),
         }
         for key, value in self.connection.execute("SELECT key, value FROM settings"):
@@ -305,6 +306,10 @@ class Store:
             raise BackendError("Close after launch must be true or false.")
         if "steamgriddb_api_key" in values:
             values["steamgriddb_api_key"] = api_key(values["steamgriddb_api_key"])
+        if "default_icon_source" in values:
+            source = values["default_icon_source"]
+            if not isinstance(source, str) or source not in ("extracted", "steamgriddb"):
+                raise BackendError("Default icon source must be extracted or steamgriddb.")
         for key in ("prefix_root", "default_proton"):
             if key in values:
                 values[key] = text(values[key], key, required=True)

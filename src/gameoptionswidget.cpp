@@ -531,8 +531,8 @@ void GameOptionsWidget::setKind(const QString &kind) {
     if (index >= 0) m_kind->setCurrentIndex(index);
 }
 
-void GameOptionsWidget::addGeneralOption(QWidget *option) {
-    if (m_generalOptions) m_generalOptions->insertWidget(m_generalOptions->count() - 1, option);
+void GameOptionsWidget::addGeneralOption(QWidget *option, bool first) {
+    if (m_generalOptions) m_generalOptions->insertWidget(first ? 0 : m_generalOptions->count() - 1, option);
 }
 
 void GameOptionsWidget::addIconControl(QWidget *control) {

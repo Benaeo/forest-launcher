@@ -26,7 +26,7 @@ public:
     QString protonSelection() const;
     void setKind(const QString &kind);
     void setExecutablePath(const QString &path);
-    void addGeneralOption(QWidget *option);
+    void addGeneralOption(QWidget *option, bool first = false);
     void addIconControl(QWidget *control);
     QCheckBox *steamShortcutCheck() const { return m_steamShortcut; }
 private:

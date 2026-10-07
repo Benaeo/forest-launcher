@@ -26,6 +26,7 @@ private:
     void updateKind();
     void fetchTitleSuggestions();
     void extractInitialIcon();
+    void fetchInitialSteamIcon();
     void extractIcon();
     void extractionFailed(const QString &error);
     void chooseIconSource();
@@ -39,6 +40,7 @@ private:
     QSet<QString> m_extractionAttempted;
     bool m_creating = false;
     bool m_iconBusy = false;
+    bool m_automaticSteamIcon = false;
     int m_iconRevision = 0;
     QPushButton *m_icon;
     QTimer *m_iconDebounce;
