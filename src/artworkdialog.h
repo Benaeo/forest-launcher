@@ -10,6 +10,8 @@
 #include <QCryptographicHash>
 #include <QJsonDocument>
 #include <QEvent>
+#include <QMap>
+#include <QPushButton>
 
 // Image-only browser. Matching titles are combined internally; the user never
 // chooses a database game or an artwork category. A click selects the icon or
@@ -52,6 +54,26 @@ public:
         m_error->setWordWrap(true);
         m_error->hide();
         m_layout->addWidget(m_error);
+        m_selectionStatus = new QLabel(this);
+        m_selectionStatus->setTextFormat(Qt::PlainText);
+        m_selectionStatus->setWordWrap(true);
+        m_selectionStatus->hide();
+        m_layout->addWidget(m_selectionStatus);
+        m_retrySelections = new QPushButton("Retry selected image downloads", this);
+        m_retrySelections->hide();
+        m_layout->addWidget(m_retrySelections);
+        const auto frontend = m_bootstrap.value("frontend").toObject();
+        m_selectionBackend = new BackendClient(frontend.value("backend").toString(), frontend.value("data_root").toString(), this);
+        connect(m_retrySelections, &QPushButton::clicked, this, [this] {
+            const auto failed = m_selectionFailures.keys();
+            m_selectionFailures.clear();
+            for (const auto &kind : failed) downloadSelection(kind, m_selectionUrls.value(kind));
+            updateSelectionStatus();
+        });
+        connect(this, &QDialog::finished, this, [this] {
+            m_selectionClosed = true;
+            m_selectionBackend->deleteLater();
+        });
         resetClient();
         connect(m_search, &QLineEdit::returnPressed, this, [this] { search(m_search->text().trimmed()); });
         connect(m_list->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
@@ -218,31 +240,61 @@ private:
         }
     }
     void select(QListWidgetItem *item) {
-        if (m_selecting || !(item->flags() & Qt::ItemIsEnabled)) return;
-        m_selecting = true;
-        m_list->setEnabled(false);
-        m_search->setEnabled(false);
-        const int epoch = m_epoch;
+        if (m_selecting || m_selectionClosed || !(item->flags() & Qt::ItemIsEnabled)) return;
         const auto selectedKind = currentKind();
-        m_backend->request("artwork_download", {{"url", item->data(Qt::UserRole).toString()}},
-            [this, epoch, selectedKind](const QJsonObject &data) {
-                if (epoch != m_epoch) return;
-                importArtworkImage(m_backend, data.value("path").toString(), [this, epoch, selectedKind](const QJsonObject &normalized) {
-                    if (epoch != m_epoch) return;
-                    m_artwork.insert(selectedKind, normalized.value("path"));
-                    if (selectionChanged) selectionChanged(m_artwork);
-                    m_selecting = false;
-                    m_list->setEnabled(true);
-                    m_search->setEnabled(true);
-                    if (!m_sequence || m_step == 3) { accept(); return; }
-                    ++m_step;
-                    updateTitle();
-                    // Search is reused for the next category, without a game chooser.
-                    search(m_query, true);
-                }, [this, epoch](const QString &message) { if (epoch == m_epoch) selectionError(message); });
-            }, [this, epoch](const QString &message) { if (epoch == m_epoch) selectionError(message); });
+        const auto url = item->data(Qt::UserRole).toString();
+        m_selectionUrls.insert(selectedKind, url);
+        // Move on before downloading/decoding the full image. Browser resets must
+        // never cancel selected-image requests, which have their own backend.
+        if (m_sequence && m_step < 3) {
+            ++m_step;
+            updateTitle();
+            search(m_query, true);
+        } else {
+            m_selecting = true;
+            m_list->setEnabled(false);
+            m_search->setEnabled(false);
+        }
+        downloadSelection(selectedKind, url);
     }
-    void selectionError(const QString &message) { m_selecting = false; m_list->setEnabled(true); m_search->setEnabled(true); error(message); }
+    void downloadSelection(const QString &kind, const QString &url) {
+        ++m_selectionsPending;
+        updateSelectionStatus();
+        m_selectionBackend->request("artwork_download", {{"url", url}},
+            [this, kind](const QJsonObject &data) {
+                if (m_selectionClosed) return;
+                importArtworkImage(m_selectionBackend, data.value("path").toString(),
+                    [this, kind](const QJsonObject &normalized) {
+                        if (m_selectionClosed) return;
+                        m_artwork.insert(kind, normalized.value("path"));
+                        --m_selectionsPending;
+                        if (selectionChanged) selectionChanged(m_artwork);
+                        updateSelectionStatus();
+                    }, [this, kind](const QString &message) { selectionError(kind, message); });
+            }, [this, kind](const QString &message) { selectionError(kind, message); });
+    }
+    void selectionError(const QString &kind, const QString &message) {
+        if (m_selectionClosed) return;
+        --m_selectionsPending;
+        m_selectionFailures.insert(kind, message);
+        updateSelectionStatus();
+    }
+    void updateSelectionStatus() {
+        if (m_selectionClosed) return;
+        QStringList failures;
+        for (auto it = m_selectionFailures.cbegin(); it != m_selectionFailures.cend(); ++it)
+            failures.append(it.key() + ": " + it.value());
+        const auto message = !failures.isEmpty() ? failures.join("\n")
+            : m_selecting && m_selectionsPending > 0 ? QString("Finishing selected image downloads…") : QString();
+        m_selectionStatus->setText(message);
+        m_selectionStatus->setVisible(!message.isEmpty());
+        m_retrySelections->setVisible(!m_selectionFailures.isEmpty());
+        if (m_selecting) {
+            status(m_selectionsPending > 0 && m_selectionFailures.isEmpty()
+                ? "Finishing selected image downloads…" : QString());
+            if (m_selectionsPending == 0 && m_selectionFailures.isEmpty()) accept();
+        }
+    }
     struct Game { int id, page; bool more; };
     struct Row { QString url, thumb, path; };
     struct Cached { QString key; QList<Game> games; QList<Row> rows; qsizetype bytes; };
@@ -300,6 +352,12 @@ private:
     QLineEdit *m_search;
     QListWidget *m_list;
     QLabel *m_error, *m_status;
+    QLabel *m_selectionStatus;
+    QPushButton *m_retrySelections;
+    BackendClient *m_selectionBackend;
+    QMap<QString, QString> m_selectionUrls, m_selectionFailures;
+    int m_selectionsPending = 0;
+    bool m_selectionClosed = false;
     QString m_query, m_waitingQuery;
     QString m_identityTitle;
     int m_gameId = 0;
