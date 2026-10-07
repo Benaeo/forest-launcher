@@ -41,6 +41,7 @@ private:
     bool m_creating = false;
     bool m_iconBusy = false;
     bool m_automaticSteamIcon = false;
+    bool m_executableIconFallbackPending = false;
     int m_iconRevision = 0;
     QPushButton *m_icon;
     QTimer *m_iconDebounce;

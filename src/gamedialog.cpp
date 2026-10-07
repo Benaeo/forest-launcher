@@ -109,7 +109,10 @@ GameDialog::GameDialog(const QJsonObject &game, const QJsonObject &bootstrap, QW
     connect(m_title, &QLineEdit::editingFinished, this, [this] { m_iconDebounce->start(); });
     connect(m_path, &QLineEdit::textChanged, this, [this] {
         m_options->setExecutablePath(m_path->text());
-        // SteamGridDB icons depend on the title, not the executable.
+        // Extract only when selection finds neither an icon nor a pending
+        // SteamGridDB request. Never interrupt the title-based download.
+        m_executableIconFallbackPending = m_creating && m_artwork.value("icon").toString().isEmpty()
+            && !m_automaticSteamIcon && QFileInfo(m_path->text().trimmed()).isFile();
         if (!m_automaticSteamIcon) {
             ++m_iconRevision;
             if (m_iconBackend) { delete m_iconBackend; m_iconBackend = nullptr; }
@@ -135,6 +138,8 @@ GameDialog::GameDialog(const QJsonObject &game, const QJsonObject &bootstrap, QW
         if (!path.isEmpty()) setExecutablePath(path);
     });
     updateKind();
+    m_executableIconFallbackPending = m_creating && m_artwork.value("icon").toString().isEmpty()
+        && QFileInfo(m_path->text().trimmed()).isFile();
 }
 
 void GameDialog::fetchTitleSuggestions() {
@@ -200,9 +205,10 @@ QJsonObject GameDialog::gameData() const {
 }
 
 void GameDialog::validateAndAccept() {
-    // A fast Save must not bypass the initial asynchronous extraction.
+    // A fast Save must not bypass the initial asynchronous icon selection.
     if (!m_iconBusy) {
-        if (m_creating && m_bootstrap.value("settings").toObject().value("default_icon_source").toString() == "steamgriddb")
+        if (m_executableIconFallbackPending) extractInitialIcon();
+        else if (m_creating && m_bootstrap.value("settings").toObject().value("default_icon_source").toString() == "steamgriddb")
             fetchInitialSteamIcon();
         else extractInitialIcon();
     }
@@ -262,13 +268,16 @@ void GameDialog::setIconBusy(bool busy) {
 }
 
 void GameDialog::extractInitialIcon() {
-    if (m_bootstrap.value("settings").toObject().value("default_icon_source").toString() == "steamgriddb") {
+    const bool steamGridDefault = m_bootstrap.value("settings").toObject().value("default_icon_source").toString() == "steamgriddb";
+    if (steamGridDefault && !m_executableIconFallbackPending) {
         if (!m_title->hasFocus() || m_steamGridDbId > 0) fetchInitialSteamIcon();
         return;
     }
+    if (m_iconBusy) return;
+    m_executableIconFallbackPending = false;
     const auto path = m_path->text().trimmed();
     const auto frontend = m_bootstrap.value("frontend").toObject();
-    if (!isVisible() || !m_creating || !m_artwork.isEmpty() || m_options->kind() == "steam"
+    if (!isVisible() || !m_creating || !m_artwork.value("icon").toString().isEmpty() || m_options->kind() == "steam"
         || !QFileInfo(path).isFile() || frontend.value("backend").toString().isEmpty()
         || m_extractionAttempted.contains(path)) return;
     m_extractionAttempted.insert(path);
@@ -367,6 +376,7 @@ void GameDialog::extractionFailed(const QString &error) {
 }
 
 void GameDialog::chooseIconSource() {
+    m_executableIconFallbackPending = false;
     if (m_options->optionsData().value("steam_shortcut").toBool()) { chooseArtwork(false, true); return; }
     m_iconDebounce->stop();
     m_extractionAttempted.insert(m_path->text().trimmed());
