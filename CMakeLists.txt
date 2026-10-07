@@ -1,6 +1,6 @@
 # Forest Launcher is licensed under GPL-3.0-only. See LICENSE for the terms.
 cmake_minimum_required(VERSION 3.20)
-project(ForestLauncher VERSION 0.20.0 LANGUAGES CXX)
+project(ForestLauncher VERSION 0.22.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
