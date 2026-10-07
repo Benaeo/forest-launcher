@@ -11,6 +11,8 @@ class QPushButton;
 class QShowEvent;
 class QTimer;
 class BackendClient;
+class QCompleter;
+class QStandardItemModel;
 
 class GameDialog : public QDialog {
 public:
@@ -22,6 +24,7 @@ protected:
     void showEvent(QShowEvent *event) override;
 private:
     void updateKind();
+    void fetchTitleSuggestions();
     void extractInitialIcon();
     void extractIcon();
     void extractionFailed(const QString &error);
@@ -41,6 +44,13 @@ private:
     QTimer *m_iconDebounce;
     BackendClient *m_iconBackend = nullptr;
     QLineEdit *m_title;
+    QTimer *m_titleDebounce;
+    QCompleter *m_titleCompleter;
+    QStandardItemModel *m_titleSuggestions;
+    BackendClient *m_titleBackend = nullptr;
+    int m_steamGridDbId = 0;
+    int m_titleRevision = 0;
+    bool m_titleRequestActive = false;
     QLabel *m_pathLabel;
     QLineEdit *m_path;
     QPushButton *m_browse;

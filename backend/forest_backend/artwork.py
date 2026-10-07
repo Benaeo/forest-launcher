@@ -175,6 +175,19 @@ def search_games(key, query, expanded=False):
     return {"games": list(found.values())[:100]}
 
 
+def title_suggestions(key, query):
+    if not isinstance(query, str) or not 1 <= len(query.strip()) <= 256 or "\0" in query:
+        raise BackendError("Enter a game title of up to 256 characters.")
+    games = []
+    for game in api_json("/search/autocomplete/" + quote(query.strip(), safe=""), key):
+        if (isinstance(game, dict) and type(game.get("id")) is int and 0 < game["id"] <= 2147483647
+                and isinstance(game.get("name"), str) and 0 < len(game["name"]) <= 256):
+            games.append({"id": game["id"], "name": game["name"]})
+            if len(games) == 10:
+                break
+    return {"games": games}
+
+
 def images(key, identity, kind, page=0):
     if type(identity) is not int or identity <= 0 or kind not in KINDS or type(page) is not int or not 0 <= page <= 1000:
         raise BackendError("Invalid artwork selection.")

@@ -80,6 +80,8 @@ class Service:
             return artwork.import_image(self.paths, params.get("path"))
         if action == "artwork_download":
             return artwork.download_image(self.paths, params.get("url"))
+        if action == "title_suggestions":
+            return artwork.title_suggestions(self.store.get_settings()["steamgriddb_api_key"], params.get("query"))
         if action == "artwork_search":
             return artwork.search_games(self.store.get_settings()["steamgriddb_api_key"], params.get("query"), params.get("expanded", False))
         if action == "artwork_images":

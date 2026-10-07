@@ -17,8 +17,9 @@
 class ArtworkDialog : public QDialog {
 public:
     ArtworkDialog(QJsonObject bootstrap, QString title, QJsonObject artwork,
-                  QWidget *parent = nullptr, bool sequence = false)
-        : QDialog(parent), m_bootstrap(std::move(bootstrap)), m_artwork(std::move(artwork)), m_sequence(sequence) {
+                  QWidget *parent = nullptr, bool sequence = false, int gameId = 0)
+        : QDialog(parent), m_bootstrap(std::move(bootstrap)), m_artwork(std::move(artwork)),
+          m_identityTitle(title.trimmed()), m_gameId(gameId), m_sequence(sequence) {
         setObjectName("artworkDialog");
         resize(1040, 720);
         setMinimumSize(660, 470);
@@ -65,7 +66,10 @@ public:
     bool isSequence() const { return m_sequence; }
     void addPreview(QWidget *widget) { m_layout->insertWidget(1, widget, 0, Qt::AlignHCenter); }
     std::function<void(const QJsonObject &)> selectionChanged;
-    void startSearch() { m_search->setFocus(); }
+    void startSearch() {
+        m_search->setFocus();
+        QTimer::singleShot(0, this, [this] { search(m_search->text().trimmed()); });
+    }
 protected:
     bool eventFilter(QObject *object, QEvent *event) override {
         if (object == m_list->viewport() && event->type() == QEvent::Resize) m_status->setGeometry(m_list->viewport()->rect());
@@ -125,6 +129,11 @@ private:
         m_query = query;
         if (restoreCache()) return;
         const int epoch = m_epoch;
+        if (m_gameId > 0 && query == m_identityTitle) {
+            m_games.append({m_gameId, 0, true});
+            loadMore();
+            return;
+        }
         m_loading = true;
         status("Searching " + plural() + "…");
         m_backend->request("artwork_search", {{"query", query}}, [this, epoch](const QJsonObject &data) {
@@ -241,7 +250,8 @@ private:
     QString cacheKey() const {
         const auto frontend = m_bootstrap.value("frontend").toObject();
         QJsonArray scope{frontend.value("backend"), frontend.value("data_root"),
-            m_bootstrap.value("settings").toObject().value("steamgriddb_api_key"), m_query, currentKind()};
+            m_bootstrap.value("settings").toObject().value("steamgriddb_api_key"), m_query, currentKind(),
+            m_query == m_identityTitle ? m_gameId : 0};
         return QString::fromLatin1(QCryptographicHash::hash(QJsonDocument(scope).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256).toHex());
     }
     void finishLoading() {
@@ -291,6 +301,8 @@ private:
     QListWidget *m_list;
     QLabel *m_error, *m_status;
     QString m_query, m_waitingQuery;
+    QString m_identityTitle;
+    int m_gameId = 0;
     QList<Row> m_rows;
     BackendClient *m_backend = nullptr;
     QList<Game> m_games;

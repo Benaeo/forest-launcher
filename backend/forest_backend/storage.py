@@ -218,6 +218,14 @@ class Store:
             if game["kind"] == "windows" and not game["prefix"] and (previous["prefix"] or previous["kind"] != "windows"):
                 # Clearing an explicit prefix resets it; untouched legacy blanks stay legacy.
                 game["prefix"] = self.get_settings()["new_game_defaults"]["prefix"] or str(default_shared_prefix())
+        if "steamgriddb_id" in value:
+            identity = value["steamgriddb_id"]
+            if identity is not None and (type(identity) is not int or not 0 < identity <= 2147483647):
+                raise BackendError("SteamGridDB game ID must be a positive integer.")
+            if identity is not None:
+                game["steamgriddb_id"] = identity
+        elif not creating and "steamgriddb_id" in previous:
+            game["steamgriddb_id"] = previous["steamgriddb_id"]
         if "artwork" in value:
             game["artwork"] = validate_artwork(value["artwork"], self.paths)
         elif not creating and "artwork" in previous:

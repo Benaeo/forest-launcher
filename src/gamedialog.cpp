@@ -7,6 +7,10 @@
 #endif
 
 #include <QComboBox>
+#include <QCompleter>
+#include <QStandardItemModel>
+#include <QAbstractItemView>
+#include <QSignalBlocker>
 #include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -42,6 +46,37 @@ GameDialog::GameDialog(const QJsonObject &game, const QJsonObject &bootstrap, QW
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     m_title = new QLineEdit(initial.value("title").toString(), this);
     m_title->setObjectName("gameTitle");
+    m_title->setMaxLength(256);
+    m_steamGridDbId = initial.value("steamgriddb_id").toInt();
+    m_titleSuggestions = new QStandardItemModel(this);
+    m_titleCompleter = new QCompleter(m_titleSuggestions, this);
+    m_titleCompleter->setCompletionMode(QCompleter::UnfilteredPopupCompletion);
+    m_titleCompleter->setMaxVisibleItems(10);
+    m_titleCompleter->setWidget(m_title);
+    m_titleDebounce = new QTimer(this);
+    m_titleDebounce->setSingleShot(true);
+    m_titleDebounce->setInterval(350);
+    connect(m_titleDebounce, &QTimer::timeout, this, &GameDialog::fetchTitleSuggestions);
+    connect(m_title, &QLineEdit::textChanged, this, [this] {
+        ++m_titleRevision;
+        m_steamGridDbId = 0;
+        m_titleCompleter->popup()->hide();
+        m_titleSuggestions->clear();
+        m_titleDebounce->stop();
+        if (!m_title->text().trimmed().isEmpty()) m_titleDebounce->start();
+    });
+    connect(m_titleCompleter, qOverload<const QModelIndex &>(&QCompleter::activated), this,
+        [this](const QModelIndex &index) {
+            const int identity = index.data(Qt::UserRole).toInt();
+            if (identity <= 0) return;
+            const QString title = index.data(Qt::DisplayRole).toString();
+            m_titleDebounce->stop();
+            ++m_titleRevision;
+            const QSignalBlocker blocker(m_title);
+            m_title->setText(title);
+            m_steamGridDbId = identity;
+            m_titleCompleter->popup()->hide();
+        });
     m_pathLabel = new QLabel(this);
     m_path = new QLineEdit(initial.value("path").toString(), this);
     m_path->setObjectName("gameExecutable");
@@ -92,6 +127,37 @@ GameDialog::GameDialog(const QJsonObject &game, const QJsonObject &bootstrap, QW
     updateKind();
 }
 
+void GameDialog::fetchTitleSuggestions() {
+    const auto query = m_title->text().trimmed();
+    const auto frontend = m_bootstrap.value("frontend").toObject();
+    if (m_titleRequestActive || !isVisible() || !m_title->hasFocus() || query.isEmpty()
+        || m_steamGridDbId > 0 || frontend.value("backend").toString().isEmpty()
+        || m_bootstrap.value("settings").toObject().value("steamgriddb_api_key").toString().isEmpty()) return;
+    if (!m_titleBackend)
+        m_titleBackend = new BackendClient(frontend.value("backend").toString(), frontend.value("data_root").toString(), this);
+    m_titleRequestActive = true;
+    const int revision = m_titleRevision;
+    auto finished = [this, revision] {
+        m_titleRequestActive = false;
+        // At most one request is active; fetch the latest text once its debounce has elapsed.
+        if (revision != m_titleRevision && !m_titleDebounce->isActive()) fetchTitleSuggestions();
+    };
+    m_titleBackend->request("title_suggestions", {{"query", query}},
+        [this, revision, finished](const QJsonObject &data) {
+            if (revision == m_titleRevision && isVisible() && m_title->hasFocus()) {
+                m_titleSuggestions->clear();
+                for (const auto &value : data.value("games").toArray()) {
+                    const auto game = value.toObject();
+                    auto *item = new QStandardItem(game.value("name").toString());
+                    item->setData(game.value("id").toInt(), Qt::UserRole);
+                    m_titleSuggestions->appendRow(item);
+                }
+                if (m_titleSuggestions->rowCount()) m_titleCompleter->complete();
+            }
+            finished();
+        }, [finished](const QString &) { finished(); });
+}
+
 void GameDialog::setExecutablePath(const QString &path) {
     m_path->setText(path);
     const auto suffix = QFileInfo(path).suffix().toLower();
@@ -112,6 +178,7 @@ QJsonObject GameDialog::gameData() const {
     const auto options = m_options->optionsData();
     for (auto it = options.begin(); it != options.end(); ++it) game.insert(it.key(), it.value());
     game.insert("title", m_title->text().trimmed());
+    game.insert("steamgriddb_id", m_steamGridDbId > 0 ? QJsonValue(m_steamGridDbId) : QJsonValue(QJsonValue::Null));
     game.insert("path", m_path->text().trimmed());
     if (!m_artwork.isEmpty()) game.insert("artwork", m_artwork);
     return game;
@@ -254,7 +321,7 @@ bool GameDialog::chooseArtwork(bool startSearch, bool steamRequested) {
     ++m_iconRevision;
     if (m_iconBackend) { m_iconBackend->deleteLater(); m_iconBackend = nullptr; }
     setIconBusy(false);
-    ArtworkDialog dialog(m_bootstrap, m_title->text(), m_artwork, isVisible() ? this : parentWidget(), steamRequested);
+    ArtworkDialog dialog(m_bootstrap, m_title->text(), m_artwork, isVisible() ? this : parentWidget(), steamRequested, m_steamGridDbId);
 #if FOREST_ARTWORK_PREVIEW
     if (steamRequested) {
         auto *preview = new ArtworkPreview(&dialog);
@@ -263,7 +330,7 @@ bool GameDialog::chooseArtwork(bool startSearch, bool steamRequested) {
         dialog.selectionChanged = [preview](const QJsonObject &artwork) { preview->setArtwork(artwork); };
     }
 #endif
-    if (startSearch) dialog.startSearch();
+    if (startSearch || !m_title->text().trimmed().isEmpty()) dialog.startSearch();
     const bool accepted = dialog.exec() == QDialog::Accepted;
     m_bootstrap.insert("settings", dialog.settingsData());
     if (accepted) {
