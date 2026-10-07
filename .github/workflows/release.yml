@@ -24,7 +24,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Require an annotated tag matching all three source versions
+      - name: Require an annotated tag matching the CMake source version
         id: source
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -52,7 +52,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Build, test, package and smoke-test in the target distro
+      - name: Build, package and verify installation in the target distro
         env:
           TARGET: ${{ matrix.target }}
           IMAGE: ${{ matrix.image }}
@@ -146,26 +146,24 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          # A failed upload leaves a draft, not a partially published release.
-          cat > build/release-notes.md <<'EOF'
-          ## Linux x86_64 downloads
-          - Arch Linux: .pkg.tar.zst
-          - Fedora 44: .fc44.x86_64.rpm
-          - Debian 13 / Ubuntu 24.04 LTS: shared amd64.deb
+          # Prepare a draft with approved notes before publication. Never
+          # generate replacement text or publish an empty/unprepared draft.
+          gh release view "$RELEASE_TAG" --json isDraft,body > build/release-draft.json || {
+            echo "Prepare a release draft with approved notes before rerunning publication." >&2
+            exit 1
+          }
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
 
-          Native packages require Qt 6.4+ and Python 3.11+; the package manager resolves dependencies.
-          Steam, MangoHud and lsfg-vk are optional packages; availability/repository requirements vary by distro.
-          Games, Steam, Proton runners and optional integrations are not bundled.
-          ARM and Flatpak builds are not included in this release.
-          EOF
-          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > build/release-draft.txt; then
-            [[ "$(tr -d '\n' < build/release-draft.txt)" == true ]] || {
-              echo "This release is already public; refusing to overwrite its assets." >&2
-              exit 1
-            }
-          else
-            gh release create "$RELEASE_TAG" --verify-tag --draft \
-              --title "Forest Launcher $RELEASE_TAG" --notes-file build/release-notes.md
-          fi
+          release = json.loads(Path("build/release-draft.json").read_text())
+          if release.get("isDraft") is not True:
+              raise SystemExit("This release is already public; refusing to overwrite its assets.")
+          body = release.get("body")
+          if not isinstance(body, str) or not body.strip():
+              raise SystemExit("The release draft needs approved, non-empty notes before publication.")
+          PY
+          # A failed upload leaves a draft, not a partially published release.
+          # Omitting --notes-file preserves the draft body, including images.
           gh release upload "$RELEASE_TAG" build/release-assets/* --clobber
-          gh release edit "$RELEASE_TAG" --draft=false --latest --notes-file build/release-notes.md
+          gh release edit "$RELEASE_TAG" --draft=false --latest

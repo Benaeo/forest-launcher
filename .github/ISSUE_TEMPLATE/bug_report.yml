@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a problem with Forest Launcher itself.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check the [latest release](https://github.com/Benaeo/forest-launcher/releases/latest) before reporting a bug.
+
+        **Forest Launcher does not provide game support.** Game-specific crashes, graphical problems, or Proton compatibility issues should be reported to the relevant game or compatibility project, not here.
+
+        Problems with Forest Launcher's launch configuration or runner management are welcome.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I verified that I am using the latest released Forest Launcher version.
+          required: true
+        - label: This concerns Forest Launcher itself, not a game-specific bug or Proton compatibility issue.
+          required: true
+  - type: input
+    id: launcher-version
+    attributes:
+      label: Forest Launcher version
+      description: Enter the exact installed version.
+      placeholder: "0.20.0"
+    validations:
+      required: true
+  - type: input
+    id: distribution
+    attributes:
+      label: Distribution and version
+      placeholder: "Arch Linux (fully updated), Fedora 44, Debian 13, Ubuntu 24.04"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the problem with the launcher.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Give the steps needed to reproduce the launcher problem.
+      placeholder: |
+        1. Open Forest Launcher
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should the launcher have done?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs and screenshots
+      description: |
+        Optional. Attach relevant launcher logs or screenshots.
+        Remove API keys, credentials, and personal information before posting.

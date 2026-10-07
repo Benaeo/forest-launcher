@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest an improvement to Forest Launcher.
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Explain the need or difficulty behind your request.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Describe your proposed feature
+      description: Explain what you would like Forest Launcher to do.
+    validations:
+      required: true
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples or screenshots
+      description: Optional. Add examples, mockups, or screenshots to illustrate your idea.
