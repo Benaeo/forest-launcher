@@ -81,8 +81,8 @@ public:
         setWindowTitle("Choose an icon source");
         setMinimumWidth(400);
         auto *layout = new QVBoxLayout(this);
-        for (const auto &entry : {std::pair<QString, int>{"Use extracted icon", Extracted},
-                                 {"Use icon from file", File}, {"Use icon from SteamGridDB", SteamGridDB}}) {
+        for (const auto &entry : {std::pair<QString, int>{"SteamGridDB", SteamGridDB},
+                                 {"Use extracted icon", Extracted}, {"Use icon from file", File}}) {
             auto *button = new QPushButton(entry.first, this);
             button->setObjectName(entry.second == Extracted ? "useExtractedIcon" : entry.second == File ? "useIconFile" : "useSteamGridDbIcon");
             button->setMinimumHeight(40);
