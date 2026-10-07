@@ -118,13 +118,13 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     refreshProtonChoices(proton);
     m_arguments = new QLineEdit(options.value("arguments").toString(), this);
     m_arguments->setObjectName("gameArguments");
-    m_arguments->setPlaceholderText("Optional arguments, e.g. -fullscreen");
+    m_arguments->setPlaceholderText("-fullscreen -dx11 -novid");
     QStringList tags;
     for (const auto &value : options.value("tags").toArray())
         if (value.toString() != "online-fix") tags << value.toString();
     m_tags = new QLineEdit(tags.join(", "), this);
     m_tags->setObjectName("gameTags");
-    m_tags->setPlaceholderText("Optional comma-separated tags");
+    m_tags->setPlaceholderText("fps,horror,free-to-play,survival");
     m_onlineFix = new QCheckBox("online-fix - Steam", this);
     m_onlineFix->setObjectName("onlineFixCheck");
     m_onlineFix->setToolTip("Use native Steam and Proton with the [Main] FakeAppId from OnlineFix.ini or SteamFix.ini beside the game executable. A valid INI is required. No game files are changed.");
@@ -412,7 +412,7 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     advancedLayout->addWidget(hint);
     m_environment = new QPlainTextEdit(advanced);
     m_environment->setObjectName("gameEnvironment");
-    m_environment->setPlaceholderText("DXVK_HUD=fps\nPROTON_ENABLE_WAYLAND=1");
+    m_environment->setPlaceholderText("PROTON_ENABLE_WAYLAND=1\nDXVK_HUD=fps,memory,version,api\nPROTON_FSR4_UPGRADE=1\nPROTON_VKD3D_LOWLATENCY=1");
     QStringList environment;
     const auto variables = options.value("environment").toObject();
     for (auto it = variables.begin(); it != variables.end(); ++it)
