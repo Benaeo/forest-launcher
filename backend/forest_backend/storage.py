@@ -5,7 +5,7 @@ import shlex
 import sqlite3
 from uuid import uuid4
 
-from .common import BackendError, Paths, default_shared_prefix, expand_path
+from .common import BackendError, Paths, default_shared_prefix, default_game_prefix, expand_path
 from .steam import DEFAULT_PROTON
 from .lossless import default_options as default_lossless_options, validate_options as validate_lossless_options
 from .artwork import api_key, validate_artwork
@@ -55,7 +55,7 @@ def parse_environment(value) -> dict[str, str]:
 
 
 def default_game_options() -> dict:
-    return {"kind": "windows", "prefix": str(default_shared_prefix()), "proton": "default",
+    return {"kind": "windows", "prefix": "", "proton": "default",
             "arguments": "", "environment": {}, "tags": [], "online_fix_requested": False,
             "steam_launch_account": "", "steam_shortcut": False, "steam_accounts": [],
             "lossless_scaling": default_lossless_options(),
@@ -204,7 +204,7 @@ class Store:
             game_id = str(uuid4())
             if game["kind"] == "windows":
                 if not game["prefix"]:
-                    game["prefix"] = settings["new_game_defaults"]["prefix"] or str(default_shared_prefix())
+                    game["prefix"] = default_game_prefix(game["title"], settings)
                 if game["proton"] in ("", "default"):
                     game["proton"] = settings["default_proton"]
         else:
@@ -217,7 +217,7 @@ class Store:
                 game.pop("lossless_scaling")
             if game["kind"] == "windows" and not game["prefix"] and (previous["prefix"] or previous["kind"] != "windows"):
                 # Clearing an explicit prefix resets it; untouched legacy blanks stay legacy.
-                game["prefix"] = self.get_settings()["new_game_defaults"]["prefix"] or str(default_shared_prefix())
+                game["prefix"] = default_game_prefix(game["title"], self.get_settings())
         if "steamgriddb_id" in value:
             identity = value["steamgriddb_id"]
             if identity is not None and (type(identity) is not int or not 0 < identity <= 2147483647):
@@ -273,6 +273,8 @@ class Store:
     def get_settings(self) -> dict:
         defaults = {
             "prefix_root": str(self.paths.default_prefix_root),
+            "prefix_directory": str(default_shared_prefix().parent),
+            "prefix_naming": "title",
             "default_proton": DEFAULT_PROTON,
             "close_after_launch": False,
             "steamgriddb_api_key": "",
@@ -291,8 +293,9 @@ class Store:
                 defaults[key] = json.loads(value)
         if defaults["default_proton"] in ("", "default", "auto"):
             defaults["default_proton"] = DEFAULT_PROTON
-        if defaults["new_game_defaults"]["kind"] == "windows" and not defaults["new_game_defaults"]["prefix"]:
-            defaults["new_game_defaults"]["prefix"] = str(default_shared_prefix())
+        # Prefix preferences are separate from the per-game options template.
+        # Existing game documents (including legacy blank prefixes) are untouched.
+        defaults["new_game_defaults"]["prefix"] = ""
         return defaults
 
     def save_settings(self, values: dict) -> dict:
@@ -310,7 +313,9 @@ class Store:
             source = values["default_icon_source"]
             if not isinstance(source, str) or source not in ("extracted", "steamgriddb"):
                 raise BackendError("Default icon source must be extracted or steamgriddb.")
-        for key in ("prefix_root", "default_proton"):
+        if "prefix_naming" in values and values["prefix_naming"] not in ("title", "default"):
+            raise BackendError("Prefix naming must be title or default.")
+        for key in ("prefix_root", "prefix_directory", "default_proton"):
             if key in values:
                 values[key] = text(values[key], key, required=True)
         if "new_game_defaults" in values:
@@ -330,11 +335,11 @@ class Store:
                     raise BackendError("Default Proton selections must agree.")
                 values["default_proton"] = options["proton"]
             options["proton"] = "default"
-            if options["kind"] == "windows" and not options["prefix"]:
-                options["prefix"] = str(default_shared_prefix())
+            options["prefix"] = ""
             values["new_game_defaults"] = options
         settings.update(values)
         settings["prefix_root"] = expand_path(settings["prefix_root"])
+        settings["prefix_directory"] = expand_path(settings["prefix_directory"])
         with self.connection:
             for key, value in settings.items():
                 self.connection.execute(

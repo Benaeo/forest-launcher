@@ -21,6 +21,8 @@ public:
     GameOptionsWidget(const QJsonObject &options, const QJsonObject &bootstrap, QWidget *parent = nullptr,
                       bool defaultsEditor = false);
     QJsonObject optionsData() const;
+    QJsonObject prefixSettings() const;
+    void setGameTitle(const QString &title);
     QComboBox *kindSelector() const { return m_kind; }
     QString kind() const;
     QString protonSelection() const;
@@ -37,6 +39,10 @@ private:
     void finishLatestDownload();
     QComboBox *m_kind;
     QLineEdit *m_prefix;
+    QComboBox *m_prefixNaming = nullptr;
+    QString m_prefixDirectory;
+    QString m_prefixMode;
+    bool m_automaticPrefix = false;
     QPushButton *m_prefixBrowse;
     QComboBox *m_proton;
     QPushButton *m_downloadLatest;

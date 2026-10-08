@@ -65,5 +65,7 @@ QJsonObject SettingsDialog::settingsData() const {
     auto options = m_defaults->optionsData();
     options.insert("proton", "default");
     settings.insert("new_game_defaults", options);
+    const auto prefixes = m_defaults->prefixSettings();
+    for (auto it = prefixes.begin(); it != prefixes.end(); ++it) settings.insert(it.key(), it.value());
     return settings;
 }

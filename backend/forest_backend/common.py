@@ -17,6 +17,14 @@ def default_shared_prefix() -> Path:
     return Path.home() / "Games/forest-launcher/default"
 
 
+def default_game_prefix(title: str, settings: dict) -> str:
+    import re
+    name = re.sub(r"[\s/\\]+", "-", title.strip().lower()).strip(".") or "game"
+    if settings.get("prefix_naming", "title") == "default":
+        name = "default"
+    return str(Path(settings["prefix_directory"]) / name)
+
+
 def xdg_home(key: str, fallback: Path) -> Path:
     value = os.environ.get(key, "")
     return Path(value) if value and Path(value).is_absolute() else fallback

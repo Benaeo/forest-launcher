@@ -79,6 +79,7 @@ GameDialog::GameDialog(const QJsonObject &game, const QJsonObject &bootstrap, QW
             ++m_titleRevision;
             const QSignalBlocker blocker(m_title);
             m_title->setText(title);
+            m_options->setGameTitle(title);
             m_steamGridDbId = identity;
             m_titleCompleter->popup()->hide();
             m_iconDebounce->start();
@@ -94,6 +95,7 @@ GameDialog::GameDialog(const QJsonObject &game, const QJsonObject &bootstrap, QW
     form->addRow(m_pathLabel, pathRow);
     layout->addLayout(form);
     m_options = new GameOptionsWidget(initial, bootstrap, this);
+    connect(m_title, &QLineEdit::textChanged, m_options, &GameOptionsWidget::setGameTitle);
     m_icon = new QPushButton(this);
     m_icon->setObjectName("gameIconButton");
     m_icon->setFixedSize(96, 96);

@@ -21,6 +21,7 @@
 #include <QPushButton>
 #include <QProgressBar>
 #include <QSignalBlocker>
+#include <QRegularExpression>
 #include <QSet>
 #include <QTabWidget>
 #include <QVBoxLayout>
@@ -85,17 +86,30 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     m_kind->setCurrentIndex(qMax(0, m_kind->findData(options.value("kind").toString("windows"))));
     m_prefix = new QLineEdit(options.value("prefix").toString(), this);
     m_prefix->setObjectName("gamePrefix");
-    const auto builtInPrefix = QDir::homePath() + "/Games/forest-launcher/default";
-    auto sharedPrefix = bootstrap.value("settings").toObject().value("new_game_defaults").toObject().value("prefix").toString();
-    if (defaultsEditor || sharedPrefix.isEmpty()) sharedPrefix = builtInPrefix;
-    m_prefix->setPlaceholderText("Shared default: " + sharedPrefix);
+    const auto settings = bootstrap.value("settings").toObject();
+    m_prefixDirectory = settings.value("prefix_directory").toString(QDir::homePath() + "/Games/forest-launcher");
+    m_prefixMode = settings.value("prefix_naming").toString("title");
+    m_automaticPrefix = !defaultsEditor && options.value("prefix").toString().isEmpty();
+    m_prefix->setPlaceholderText(defaultsEditor ? "Enter a base folder" : "Enter a Wine prefix path");
     m_prefix->setToolTip(defaultsEditor
-        ? "All new Windows games share this prefix unless overridden. Leave blank to restore " + builtInPrefix + "."
-        : "Override the shared prefix for this game, or leave blank to use " + sharedPrefix + ".");
+        ? "Editable base folder for new game prefixes. The naming preference is kept when you change this folder. Existing games are unchanged."
+        : "Type a custom prefix path, or clear it to restore the current global naming preference when saved.");
+    if (defaultsEditor) m_prefix->setText(m_prefixDirectory);
+    connect(m_prefix, &QLineEdit::textEdited, this, [this] { m_automaticPrefix = false; });
     m_prefixBrowse = new QPushButton("Browse…", this);
     auto *prefixRow = new QHBoxLayout;
     prefixRow->addWidget(m_prefix, 1);
     prefixRow->addWidget(m_prefixBrowse);
+    if (defaultsEditor) {
+        m_prefixNaming = new QComboBox(this);
+        m_prefixNaming->setObjectName("prefixNaming");
+        m_prefixNaming->addItem("Game title", "title");
+        m_prefixNaming->addItem("Default", "default");
+        m_prefixNaming->setCurrentIndex(m_prefixMode == "default" ? 1 : 0);
+        m_prefixNaming->setToolTip("Game title: ~/Games/forest-launcher/grand-theft-auto-vi\nDefault: ~/Games/forest-launcher/default");
+        prefixRow->addWidget(m_prefixNaming);
+    }
+    setGameTitle(options.value("title").toString());
     const auto frontend = bootstrap.value("frontend").toObject();
     const auto dataRoot = frontend.value("data_root").toString();
     m_backendDirectory = frontend.value("backend").toString();
@@ -436,7 +450,10 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
     });
     connect(m_prefixBrowse, &QPushButton::clicked, this, [this] {
         const auto path = QFileDialog::getExistingDirectory(this, "Choose Wine prefix", m_prefix->text());
-        if (!path.isEmpty()) m_prefix->setText(path);
+        if (!path.isEmpty()) {
+            m_automaticPrefix = false;
+            m_prefix->setText(path);
+        }
     });
     updateKind();
     if (!defaultsEditor) setExecutablePath(options.value("path").toString());
@@ -484,6 +501,23 @@ void GameOptionsWidget::checkOnlineFix() {
         m_onlineFixReason = error;
         updateKind();
     });
+}
+
+void GameOptionsWidget::setGameTitle(const QString &title) {
+    if (!m_automaticPrefix) return;
+    auto name = title.trimmed().toLower();
+    name.replace(QRegularExpression("[\\s/\\\\]+"), "-");
+    while (name.startsWith('.')) name.remove(0, 1);
+    while (name.endsWith('.')) name.chop(1);
+    if (name.isEmpty()) name = "game";
+    if (m_prefixMode == "default") name = "default";
+    m_prefix->setText(QDir(m_prefixDirectory).filePath(name));
+}
+
+QJsonObject GameOptionsWidget::prefixSettings() const {
+    if (!m_defaultsEditor) return {};
+    return {{"prefix_directory", m_prefix->text().trimmed()},
+            {"prefix_naming", m_prefixNaming->currentData().toString()}};
 }
 
 QString GameOptionsWidget::kind() const { return m_kind->currentData().toString(); }
@@ -566,8 +600,8 @@ void GameOptionsWidget::updateLatestButton() {
 
 void GameOptionsWidget::updateKind() {
     const bool windows = kind() == "windows";
-    m_prefix->setEnabled(windows);
-    m_prefixBrowse->setEnabled(windows);
+    m_prefix->setEnabled(m_defaultsEditor || windows);
+    m_prefixBrowse->setEnabled(m_defaultsEditor || windows);
     m_proton->setEnabled(windows);
     m_onlineFix->setEnabled(m_defaultsEditor || (windows && m_onlineFixSupported));
     m_onlineFix->setToolTip(m_defaultsEditor
@@ -606,7 +640,7 @@ QJsonObject GameOptionsWidget::optionsData() const {
         tags.append("online-fix");
     QJsonObject result{
         {"kind", kind()},
-        {"prefix", kind() == "windows" ? m_prefix->text().trimmed() : QString()},
+        {"prefix", !m_defaultsEditor && kind() == "windows" ? m_prefix->text().trimmed() : QString()},
         {"proton", kind() == "windows" ? protonSelection() : "default"},
         {"arguments", m_arguments->text()}, {"tags", tags},
         {"mangohud", m_mangohud->isEnabled() && m_mangohud->isChecked()},

@@ -35,7 +35,7 @@ def removal_info(game, settings, games, paths):
              or (other["id"] != game["id"] and other["kind"] != "steam"
                  and Path(other["path"]).resolve().is_relative_to(resolved))]
     result["users"] = [{"id": other["id"], "title": other["title"]} for other in users]
-    defaults = [default_shared_prefix(), Path(settings["new_game_defaults"]["prefix"])]
+    defaults = [default_shared_prefix(), Path(settings["prefix_directory"]) / "default"]
     if any(str(default) != "." and overlaps(resolved, canonical_prefix(default)) for default in defaults):
         result["reason"] = "The shared/default prefix is protected; deleting it could affect other games."
     elif any(other["id"] != game["id"] for other in users):
