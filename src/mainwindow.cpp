@@ -4,6 +4,7 @@
 #include "gamedialog.h"
 #include "settingsdialog.h"
 #include "welcomedialog.h"
+#include "startupnewsdialog.h"
 #include "removegamedialog.h"
 #include "helpdialogs.h"
 #include "artworkui.h"
@@ -297,7 +298,7 @@ void MainWindow::refresh(const QString &selectedId) {
                 m_startupHandled = true;
                 const auto startup = data.value("startup").toObject();
                 const auto kind = startup.value("kind").toString();
-                if (kind == "welcome") {
+                if (kind == "welcome" || kind == "update") {
                     m_startupInProgress = true;
                     QTimer::singleShot(0, this, [this, startup] { showStartupFlow(startup); });
                 }
@@ -534,7 +535,29 @@ void MainWindow::showStartupFlow(const QJsonObject &startup) {
         welcome->open();
         return;
     }
-    completeStartupFlow();
+    auto *announcement = new UpdateAnnouncementDialog(version, this);
+    connect(announcement, &QDialog::finished, this, [this, announcement, startup, version](int result) {
+        const bool read = result == QDialog::Accepted;
+        announcement->deleteLater();
+        const auto showNotes = [this, read, startup, version] {
+            setBusy(false);
+            if (!read) { completeStartupFlow(); return; }
+            auto *notes = new ReleaseNotesDialog(version, startup.value("releases").toArray(), this);
+            notes->setAttribute(Qt::WA_DeleteOnClose);
+            connect(notes, &QDialog::finished, this, [this] { completeStartupFlow(); });
+            notes->open();
+        };
+        setBusy(true);
+        m_backend->request("dismiss_update", {{"launcher_version", version}},
+            [showNotes](const QJsonObject &) { showNotes(); },
+            [this, showNotes](const QString &error) {
+                showError(error);
+                // Still allow reading offline notes. The pending notice will be
+                // retried next launch if its acknowledgement could not be saved.
+                showNotes();
+            });
+    });
+    announcement->open();
 }
 
 void MainWindow::showSettings(const QJsonObject &pendingSettings) {

@@ -99,6 +99,7 @@ cp -a $work/stage/usr %{buildroot}/
 %files
 /usr/bin/forest-launcher
 /usr/share/forest-launcher/backend
+/usr/share/forest-launcher/CHANGELOG.md
 /usr/share/applications/io.github.Benaeo.forest-launcher.desktop
 %license /usr/share/forest-launcher/LICENSE
 EOF
