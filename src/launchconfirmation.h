@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backendclient.h"
+#include "missingdlldialog.h"
 
 #include <QMessageBox>
 #include <QPointer>
@@ -10,8 +11,8 @@
 #include <utility>
 
 // Shared by library Play and the windowless --launch shortcut entrypoint.
-// The first backend request is read-only if Steam needs a restart; consent is
-// scoped to the account/current Steam session and is never saved in settings.
+// DLL relocation is resolved before launching; Steam restart consent is scoped
+// to the account/current Steam session and is never saved in settings.
 inline void launchGameWithConfirmation(BackendClient *backend, QWidget *parent, const QString &id,
                                        BackendClient::Success success, BackendClient::Failure failure,
                                        std::function<void()> cancelled, const QJsonObject &consent = {}) {
@@ -22,8 +23,22 @@ inline void launchGameWithConfirmation(BackendClient *backend, QWidget *parent, 
     const bool hasParent = parent != nullptr;
     backend->request("launch_game", params,
         [clientGuard, parentGuard, hasParent, id, success = std::move(success),
-         failure, cancelled = std::move(cancelled)](const QJsonObject &data) {
+         failure, cancelled = std::move(cancelled), consent](const QJsonObject &data) {
             if (!clientGuard || (hasParent && !parentGuard)) return;
+            if (data.contains("lossless_confirmation")) {
+                const auto missing = data.value("lossless_confirmation").toObject();
+                const auto title = missing.value("title").toString();
+                if (title.isEmpty() || !missing.value("old_path").isString()) {
+                    failure("The backend returned an invalid DLL relocation request.");
+                    return;
+                }
+                MissingDllDialog prompt(clientGuard.data(), id, title, missing.value("old_path").toString(), parentGuard.data());
+                const auto result = prompt.exec();
+                if (!clientGuard || (hasParent && !parentGuard)) return;
+                if (result != QDialog::Accepted) { cancelled(); return; }
+                launchGameWithConfirmation(clientGuard.data(), parentGuard.data(), id, success, failure, cancelled, consent);
+                return;
+            }
             if (!data.contains("steam_restart_confirmation")) {
                 success(data);
                 return;

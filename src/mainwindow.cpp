@@ -429,8 +429,15 @@ void MainWindow::launchSelected() {
         }
         refresh(game.value("id").toString());
         statusBar()->showMessage("Launch started.", 5000);
-    }, [this](const QString &error) { setBusy(false); statusBar()->showMessage("Launch failed."); showError(error); },
-       [this] { setBusy(false); statusBar()->showMessage("Launch cancelled. Steam was not changed.", 5000); });
+    }, [this](const QString &error) {
+        setBusy(false);
+        refresh(); // A silent DLL repair may have succeeded before another launch error.
+        showError(error);
+    }, [this] {
+        setBusy(false);
+        refresh();
+        statusBar()->showMessage("Launch cancelled.", 5000);
+    });
 }
 
 void MainWindow::stopSelected() {

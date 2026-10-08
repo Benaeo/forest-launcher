@@ -17,7 +17,7 @@ from .steamshortcuts import accounts as steam_accounts, sync as sync_steam_short
 from .steamaccount import remembered_accounts, SteamRestartRequired
 from .proton import list_releases, download_version, download_latest, cleanup_downloads, install_root
 from .umu import UMUManager
-from .lossless import installed as lsfg_installed, discover_dll, MISSING_PACKAGE
+from .lossless import installed as lsfg_installed, discover_dll, valid_dll, MISSING_PACKAGE
 
 
 PROTOCOL_VERSION = 1
@@ -43,7 +43,7 @@ class Service:
     def dispatch(self, request: dict) -> dict:
         validate_request(request)
         action = request.get("action")
-        if action in ("save_game", "delete_game", "save_settings", "launch_game", "run_file", "stop_game"):
+        if action in ("save_game", "delete_game", "save_settings", "launch_game", "run_file", "stop_game", "relocate_lossless_scaling"):
             with library_operation(self.paths):
                 return self._dispatch(request)
         return self._dispatch(request)
@@ -92,6 +92,13 @@ class Service:
             if not lsfg_installed():
                 raise BackendError(MISSING_PACKAGE, "missing_lsfg_vk")
             return discover_dll()
+        if action == "relocate_lossless_scaling":
+            game = self.store.get_game(params.get("id", ""))
+            old_path = game["lossless_scaling"]["dll_path"]
+            if params.get("old_path") != old_path:
+                raise BackendError("The saved DLL location changed. Cancel and launch again.", "dll_path_changed")
+            self.store.relocate_lossless_paths(old_path, params.get("dll_path"))
+            return {}
         if action == "news_releases":
             return news.releases(params.get("page", 1))
         if action == "news_images":
@@ -169,6 +176,17 @@ class Service:
             settings = self.store.get_settings()
             if action == "preview_launch":
                 return build_plan(game, settings, self.paths).public()
+            lossless = game["lossless_scaling"]
+            if game["kind"] != "steam" and lossless["multiplier"] > 1 and not valid_dll(lossless["dll_path"]):
+                if not lsfg_installed():
+                    raise BackendError(MISSING_PACKAGE, "missing_lsfg_vk")
+                found = discover_dll(home=self.paths.root) if self.paths.root else discover_dll()
+                if valid_dll(found["dll_path"]):
+                    self.store.relocate_lossless_paths(lossless["dll_path"], found["dll_path"])
+                    game = self.store.get_game(game["id"])
+                    settings = self.store.get_settings()
+                else:
+                    return {"lossless_confirmation": {"title": game["title"], "old_path": lossless["dll_path"]}}
             consent = params.get("steam_restart_consent")
             if consent is not None and (not isinstance(consent, dict)
                     or set(consent) != {"account", "session"}

@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from .common import BackendError, Paths, default_shared_prefix, default_game_prefix, expand_path, game_name
 from .steam import DEFAULT_PROTON
-from .lossless import default_options as default_lossless_options, validate_options as validate_lossless_options
+from .lossless import default_options as default_lossless_options, validate_options as validate_lossless_options, valid_dll
 from .artwork import api_key, validate_artwork, persisted_artwork, remove_saved_artwork, KINDS as ARTWORK_KINDS
 from .steamshortcuts import selected_accounts
 from .onlinefix import effective_game
@@ -280,6 +280,32 @@ class Store:
         game = self.get_game(game_id)
         game["last_launched"] = now()
         write_document(self.paths.games_directory / (game["slug"] + ".json"), game)
+
+    def relocate_lossless_paths(self, old_path: str, new_path: str) -> None:
+        old_path = expand_path(text(old_path, "Previous DLL location"))
+        new_path = expand_path(text(new_path, "DLL location", required=True))
+        if not valid_dll(new_path):
+            raise BackendError("Choose an existing, readable lsfg-vk.dll location.", "missing_lossless_dll")
+        changes = []
+        settings = self.get_settings()
+        defaults = settings["new_game_defaults"]["lossless_scaling"]
+        if defaults["dll_path"] == old_path:
+            settings["new_game_defaults"]["lossless_scaling"] = {**defaults, "dll_path": new_path}
+            changes.append((self.paths.settings_file, settings))
+        for game in self.list_games():
+            if game["lossless_scaling"]["dll_path"] == old_path:
+                game["lossless_scaling"] = {**game["lossless_scaling"], "dll_path": new_path}
+                changes.append((self.paths.games_directory / (game["slug"] + ".json"), game))
+        originals = {path: read_document(path) for path, _ in changes}
+        written = []
+        try:
+            for path, document in changes:
+                write_document(path, document)
+                written.append(path)
+        except BaseException:
+            for path in reversed(written):
+                write_document(path, originals[path])
+            raise
 
     def get_settings(self) -> dict:
         defaults = {

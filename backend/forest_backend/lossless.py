@@ -8,6 +8,7 @@ import stat
 import time
 
 from .common import BackendError, expand_path
+from .steam import native_steam_root, steam_libraries
 
 MISSING_PACKAGE = "Install the missing package lsfg-vk to use this feature."
 MAX_SEARCH_ENTRIES = 100_000
@@ -156,10 +157,13 @@ def discover_dll(home: Path | None = None) -> dict:
     home = home if home is not None else Path.home()
     deadline = time.monotonic() + SEARCH_SECONDS
     visited = 0
-    roots = [home / ".local/share" / name / "steamapps/common/Lossless Scaling"
-             for name in ("Steam", "steam")]
-    roots += [home / "Games", home / "Downloads"]
-    for index, root in enumerate(roots):
+    locations = [home / ".local/share" / name / "steamapps/common/Lossless Scaling"
+                 for name in ("Steam", "steam")]
+    if home == Path.home():
+        locations += [library / "steamapps/common/Lossless Scaling" for library in steam_libraries(native_steam_root())]
+    roots = [(root, False) for root in dict.fromkeys(locations)]
+    roots += [(home / "Games", True), (home / "Downloads", True)]
+    for root, recursive in roots:
         pending = [root]
         while pending:
             if time.monotonic() >= deadline:
@@ -175,13 +179,20 @@ def discover_dll(home: Path | None = None) -> dict:
                             if entry.name.casefold() == "lsfg-vk.dll" and entry.is_file():
                                 if os.access(entry.path, os.R_OK):
                                     return {"dll_path": str(Path(entry.path).absolute()), "limited": False}
-                            if index >= 2 and entry.is_dir(follow_symlinks=False):
+                            if recursive and entry.is_dir(follow_symlinks=False):
                                 pending.append(Path(entry.path))
                         except OSError:
                             continue
             except OSError:
                 continue
     return {"dll_path": "", "limited": False}
+
+
+def valid_dll(value: str) -> bool:
+    if not isinstance(value, str) or not value or "\0" in value:
+        return False
+    path = Path(expand_path(value))
+    return path.name.casefold() == "lsfg-vk.dll" and path.is_file() and os.access(path, os.R_OK)
 
 
 def launch_environment(game: dict) -> dict[str, str]:
