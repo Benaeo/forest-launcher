@@ -5,10 +5,28 @@ GitHub releases and the packaged release-note viewer use this file as their sing
 
 ## Unreleased
 
+## 0.31.1
+
 ### Added
-- Optional first-launch setup for a SteamGridDB API key and global game defaults.
-- A compact post-update announcement and a scrollable page of collapsible release notes.
-- Automatic GitHub release descriptions extracted from this changelog when pushing a version tag.
+- Optional first-launch setup:
+  - Enter a SteamGridDB API key directly, with a Show key checkbox and a link to obtain one.
+  - Review global settings, or skip setup and keep the defaults.
+- Post-update release notes:
+  - A compact, resizable update announcement with Dismiss and Read news.
+  - Release notes for all versions since your previous installation, shown on one page.
+- Editable Wine prefix base directory and title-based prefix naming preferences.
+- Editable JSON global settings and title-named JSON game records.
+- Human-readable desktop and application-menu shortcut filenames.
+- Five timestamped launch logs per game with bounded trailing output.
+
+### Changed
+- Selected artwork is persisted only when saving a game.
+- Operational records use the state directory instead of the game-data directory.
+- Release-note text is shipped with the package and works offline; images load online like Help → News.
+
+### Fixed
+- Locate and repair missing Lossless Scaling DLL paths before launching games.
+- Match release-note images, Markdown styling, and hollow nested bullets to the existing News page.
 
 ## 0.22.2
 

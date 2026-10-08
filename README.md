@@ -42,7 +42,7 @@ Release packages target **Linux x86_64**:
 
 ## Getting started
 
-1. Open **Forest Launcher** from your application menu.
+1. Open **Forest Launcher** from your application menu. On first launch, optionally add a SteamGridDB API key and review global settings, or select **Skip for now**.
 2. Open **Settings** to choose defaults. Use the runner download control or **Proton Manager** to install a runner for Windows games.
 3. Choose **Add game**, select the game type, provide its executable and enable or change settings like icon.
 4. Adjust the game's options, save it, and **HAVE FUN**.
@@ -55,7 +55,7 @@ forest-launcher /path/to/game.exe
 
 UMU is managed automatically for ordinary Proton launches. Initial component/runner setup requires an internet connection.
 
-The default shared prefix is `~/Games/forest-launcher/default/` but can be changed in the global settings options
+The default prefix is `~/Games/forest-launcher/<title>/` but can be changed in the global settings options
 
 ## Dependencies
 
@@ -93,13 +93,12 @@ Default locations follow the XDG directory settings:
 
 | Data | Default location |
 | --- | --- |
-| Library/settings (SQLite), cached artwork, managed components | `~/.local/share/forest-launcher/` |
-| Configuration directory | `~/.config/forest-launcher/` |
-| Launch logs and operation state | `~/.local/state/forest-launcher/` |
+| Global settings | `~/.config/forest-launcher/settings.json` |
+| Game settings | `~/.local/share/forest-launcher/games/<game-title>.json` |
+| Saved artwork | `~/.local/share/forest-launcher/artwork/{icon,grid,banner,logo,extracted-icon}/<game-title>.png` |
+| Launch logs | `~/.local/state/forest-launcher/logs/<game-title>/<timestamp>.log` |
 | Installed Proton runners | `~/.local/share/Steam/compatibilitytools.d/` |
-| Shared game prefix | `~/Games/forest-launcher/default/` |
-
-Settings, including the SteamGridDB key, are stored in `library.sqlite3` in the data directory.
+| Per-game Wine prefix | `~/Games/forest-launcher/<game-title>/` |
 
 ## Acknowledgements
 
