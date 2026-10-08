@@ -1,17 +1,14 @@
 #include "newsdialog.h"
 #include "backendclient.h"
+#include "newsrendering.h"
 
-#include <QBuffer>
 #include <QDesktopServices>
 #include <QDialogButtonBox>
-#include <QImageReader>
 #include <QLabel>
 #include <QListWidget>
 #include <QPointer>
 #include <QPushButton>
-#include <QTextBlock>
 #include <QTextBrowser>
-#include <QTextList>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -49,15 +46,7 @@ NewsDialog::NewsDialog(const QString &backendDirectory, const QString &dataRoot,
     m_news->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_news->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_news->setFrameShape(QFrame::StyledPanel);
-    auto palette = m_news->palette();
-    palette.setColor(QPalette::Link, QColor("#58a6ff"));
-    palette.setColor(QPalette::LinkVisited, QColor("#58a6ff"));
-    m_news->setPalette(palette);
-    m_news->document()->setDocumentMargin(12);
-    m_news->document()->setDefaultStyleSheet(
-        "a { color: #58a6ff; text-decoration: underline; } h1 { font-size: 24px; } "
-        "h2 { font-size: 20px; } p { margin-top: 8px; margin-bottom: 8px; } "
-        "li { margin-top: 4px; margin-bottom: 4px; }");
+    NewsRendering::configure(m_news);
     connect(m_news, &QTextBrowser::anchorClicked, this, &openLink);
     layout->addWidget(m_news, 1);
     m_list = new QListWidget(this);
@@ -147,26 +136,7 @@ void NewsDialog::load(bool append) {
 }
 
 void NewsDialog::render(const QJsonObject &release) {
-    QTextDocument document;
-    document.setMarkdown(release.value("markdown").toString(), QTextDocument::MarkdownDialectGitHub);
-    QString html = document.toHtml();
-    for (const auto &value : release.value("fragments").toArray()) {
-        const auto fragment = value.toObject();
-        const auto marker = fragment.value("marker").toString();
-        const int position = html.indexOf(marker);
-        if (position < 0) continue;
-        const int start = html.lastIndexOf("<p", position), end = html.indexOf("</p>", position);
-        if (start >= 0 && end >= 0)
-            html.replace(start, end + 4 - start, fragment.value("html").toString());
-    }
-    m_news->setHtml(html);
-    for (auto block = m_news->document()->begin(); block.isValid(); block = block.next()) {
-        if (auto *list = block.textList()) {
-            auto format = list->format();
-            format.setStyle(format.indent() > 1 ? QTextListFormat::ListCircle : QTextListFormat::ListDisc);
-            list->setFormat(format);
-        }
-    }
+    NewsRendering::render(m_news, release);
 }
 
 void NewsDialog::showRelease(int row) {
@@ -175,10 +145,7 @@ void NewsDialog::showRelease(int row) {
     const auto generation = ++m_generation;
     m_title->setText("<a style=\"color:#58a6ff\" href=\"" + release.value("url").toString().toHtmlEscaped()
                      + "\">" + release.value("title").toString().toHtmlEscaped() + "</a>");
-    auto *document = new QTextDocument(m_news);
-    document->setDefaultStyleSheet(m_news->document()->defaultStyleSheet());
-    document->setDocumentMargin(12);
-    m_news->setDocument(document);
+    NewsRendering::configure(m_news);
     render(release);
     m_news->moveCursor(QTextCursor::Start);
     const auto urls = release.value("images").toArray();
@@ -193,24 +160,7 @@ void NewsDialog::showRelease(int row) {
                 guard->showRelease(guard->m_list->currentRow());
                 return;
             }
-            for (const auto &value : data.value("images").toArray()) {
-                const auto image = value.toObject();
-                auto bytes = QByteArray::fromBase64(image.value("data").toString().toLatin1());
-                if (bytes.size() > 4 * 1024 * 1024) continue;
-                QBuffer buffer(&bytes);
-                buffer.open(QIODevice::ReadOnly);
-                QImageReader reader(&buffer);
-                const auto size = reader.size();
-                if (!size.isValid() || size.width() > 8192 || size.height() > 8192
-                    || qint64(size.width()) * size.height() > 16 * 1024 * 1024) continue;
-                const auto format = reader.format().toLower();
-                if (format != "png" && format != "jpeg" && format != "jpg" && format != "webp" && format != "gif") continue;
-                reader.setScaledSize(size.scaled(640, 640, Qt::KeepAspectRatio));
-                const auto decoded = reader.read();
-                if (!decoded.isNull()) guard->m_news->document()->addResource(QTextDocument::ImageResource,
-                    QUrl("news-image:" + QString::number(image.value("index").toInt())), decoded);
-            }
-            guard->m_news->document()->markContentsDirty(0, guard->m_news->document()->characterCount());
+            NewsRendering::addImages(guard->m_news->document(), data);
             guard->m_news->viewport()->update();
             if (data.value("missing").toInt()) {
                 guard->m_status->setText("Some release images could not be loaded.");

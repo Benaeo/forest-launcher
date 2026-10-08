@@ -542,7 +542,8 @@ void MainWindow::showStartupFlow(const QJsonObject &startup) {
         const auto showNotes = [this, read, startup, version] {
             setBusy(false);
             if (!read) { completeStartupFlow(); return; }
-            auto *notes = new ReleaseNotesDialog(version, startup.value("releases").toArray(), this);
+            auto *notes = new ReleaseNotesDialog(version, startup.value("releases").toArray(), this,
+                m_shortcutContext.value("backend").toString(), m_dataRoot);
             notes->setAttribute(Qt::WA_DeleteOnClose);
             connect(notes, &QDialog::finished, this, [this] { completeStartupFlow(); });
             notes->open();

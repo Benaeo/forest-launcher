@@ -1,4 +1,6 @@
 #include "startupnewsdialog.h"
+#include "backendclient.h"
+#include "newsrendering.h"
 
 #include <QDesktopServices>
 #include <QFont>
@@ -7,8 +9,7 @@
 #include <QAbstractTextDocumentLayout>
 #include <QLabel>
 #include <QPushButton>
-#include <QRegularExpression>
-#include <QImage>
+#include <QTimer>
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QTextBrowser>
@@ -20,13 +21,7 @@
 #include <cmath>
 
 namespace {
-class ReleaseDocument final : public QTextDocument {
-public:
-    using QTextDocument::QTextDocument;
-protected:
-    QVariant loadResource(int, const QUrl &) override { return QVariant::fromValue(QImage()); }
-};
-
+// Use the exact News renderer, with image requests handled by the dialog.
 class ReleaseBody final : public QTextBrowser {
 public:
     explicit ReleaseBody(const QJsonObject &release, QWidget *parent) : QTextBrowser(parent) {
@@ -36,20 +31,8 @@ public:
         setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        setDocument(new ReleaseDocument(this));
-        setMarkdown(release.value("markdown").toString());
-        for (const auto &value : release.value("fragments").toArray()) {
-            const auto fragment = value.toObject();
-            const auto marker = fragment.value("marker").toString();
-            if (marker.isEmpty()) continue;
-            auto cursor = document()->find(marker);
-            if (!cursor.isNull()) {
-                auto html = fragment.value("html").toString();
-                html.replace(QRegularExpression("<img\\b[^>]*>", QRegularExpression::CaseInsensitiveOption),
-                             "[Image — available in Help → News]");
-                cursor.insertHtml(html);
-            }
-        }
+        NewsRendering::configure(this);
+        NewsRendering::render(this, release);
         const auto url = QUrl(release.value("url").toString());
         if (safeLink(url)) {
             auto cursor = textCursor();
@@ -124,7 +107,8 @@ UpdateAnnouncementDialog::UpdateAnnouncementDialog(const QString &version, QWidg
     resize(compact);
 }
 
-ReleaseNotesDialog::ReleaseNotesDialog(const QString &installedVersion, const QJsonArray &releases, QWidget *parent)
+ReleaseNotesDialog::ReleaseNotesDialog(const QString &installedVersion, const QJsonArray &releases, QWidget *parent,
+                                     const QString &backendDirectory, const QString &dataRoot)
     : QDialog(parent) {
     setWindowTitle("Release notes — Forest Launcher");
     setObjectName("postUpdateNews");
@@ -161,6 +145,8 @@ ReleaseNotesDialog::ReleaseNotesDialog(const QString &installedVersion, const QJ
         sectionLayout->addWidget(heading);
         auto *body = new ReleaseBody(release, section);
         sectionLayout->addWidget(body);
+        const auto urls = release.value("images").toArray();
+        if (!urls.isEmpty()) m_imageRequests.append(ImageRequest{body, urls});
         connect(heading, &QToolButton::toggled, section, [heading, body](bool expanded) {
             heading->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
             body->setVisible(expanded);
@@ -175,4 +161,30 @@ ReleaseNotesDialog::ReleaseNotesDialog(const QString &installedVersion, const QJ
     close->setMinimumHeight(34);
     layout->addWidget(close);
     connect(close, &QPushButton::clicked, this, &QDialog::reject);
+    if (!backendDirectory.isEmpty() && !m_imageRequests.isEmpty()) {
+        m_backend = new BackendClient(backendDirectory, dataRoot, this);
+        QTimer::singleShot(0, this, [this] { loadNextImages(); });
+    }
+}
+
+void ReleaseNotesDialog::loadNextImages() {
+    if (!m_backend || m_imageRequests.isEmpty()) return;
+    const auto request = m_imageRequests.takeFirst();
+    QPointer<ReleaseNotesDialog> guard(this);
+    // Sequential, bounded image requests keep long update histories responsive
+    // and avoid spawning one download process for every release at once.
+    m_backend->request("news_images", {{"urls", request.urls}},
+        [guard, browser = request.browser](const QJsonObject &data) {
+            if (!guard) return;
+            if (browser) {
+                NewsRendering::addImages(browser->document(), data);
+                browser->viewport()->update();
+                if (data.value("missing").toInt()) browser->setToolTip("Some release images could not be loaded.");
+            }
+            guard->loadNextImages();
+        }, [guard, browser = request.browser](const QString &) {
+            if (!guard) return;
+            if (browser) browser->setToolTip("Release images could not be loaded. Check your connection.");
+            guard->loadNextImages();
+        });
 }
