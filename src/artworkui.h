@@ -43,7 +43,9 @@ inline void importArtworkImage(BackendClient *client, const QString &path,
                                BackendClient::Success success, BackendClient::Failure failure) {
     const auto image = readArtworkImage(path);
     if (image.isNull()) { failure("Could not decode this image, or its dimensions exceed the limit."); return; }
-    auto temporary = std::make_shared<QTemporaryDir>();
+    const auto session = BackendClient::artworkSessionDirectory();
+    if (session.isEmpty()) { failure("Could not create a temporary artwork session."); return; }
+    auto temporary = std::make_shared<QTemporaryDir>(session + "/normalize-XXXXXX");
     const auto filename = temporary->filePath("image.png");
     if (!temporary->isValid() || !image.save(filename, "PNG")) { failure("Could not prepare the selected image."); return; }
     client->request("import_artwork", {{"path", filename}},

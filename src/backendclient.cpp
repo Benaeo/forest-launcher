@@ -1,14 +1,45 @@
 #include "backendclient.h"
 
 #include <QDir>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 #include <QTimer>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
 #include <memory>
 #include <utility>
+
+namespace {
+struct ArtworkSession {
+    QTemporaryDir directory{QString("/tmp/forest-launcher-artwork-%1-XXXXXX").arg(getuid())};
+    int lock = -1;
+    ArtworkSession() {
+        if (!directory.isValid()) return;
+        const auto filename = QFile::encodeName(directory.filePath(".owner.lock"));
+        lock = ::open(filename.constData(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
+        if (lock < 0 || ::flock(lock, LOCK_EX | LOCK_NB) != 0) {
+            if (lock >= 0) ::close(lock);
+            lock = -1;
+        }
+    }
+    ~ArtworkSession() {
+        // Remove while the lock is still held, before another session's cleanup.
+        directory.remove();
+        if (lock >= 0) ::close(lock);
+    }
+};
+}
+
+QString BackendClient::artworkSessionDirectory() {
+    static ArtworkSession session;
+    return session.lock >= 0 ? session.directory.path() : QString();
+}
 
 BackendClient::BackendClient(QString directory, QString dataRoot, QObject *parent)
     : QObject(parent), m_directory(std::move(directory)), m_dataRoot(std::move(dataRoot)) {}
@@ -39,6 +70,7 @@ void BackendClient::request(const QString &action, const QJsonObject &params, Su
     environment.insert("PYTHONPATH", m_directory);
     environment.insert("PYTHONUTF8", "1");
     environment.insert("PYTHONDONTWRITEBYTECODE", "1");
+    environment.insert("FOREST_ARTWORK_SESSION", artworkSessionDirectory());
     process->setProcessEnvironment(environment);
     process->setWorkingDirectory(m_directory);
     QStringList arguments{"-m", "forest_backend"};

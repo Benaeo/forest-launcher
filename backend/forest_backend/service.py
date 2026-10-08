@@ -11,6 +11,7 @@ from .steam import discover_protons, native_steam_root
 from .storage import Store
 from .shortcuts import Shortcuts
 from . import artwork, news
+from .artworktemp import cleanup_stale as cleanup_artwork
 from .icons import extract_icon
 from .steamshortcuts import accounts as steam_accounts, sync as sync_steam_shortcuts, steam_root as shortcut_steam_root
 from .steamaccount import remembered_accounts, SteamRestartRequired
@@ -52,6 +53,7 @@ class Service:
         params = request.get("params", {})
         if action == "bootstrap":
             cleanup_downloads(self.paths)
+            cleanup_artwork()
             settings = self.store.get_settings()
             umu = UMUManager(self.paths).status()
             account_error = ""
@@ -108,10 +110,13 @@ class Service:
         if action == "list_games":
             return {"games": self.store.list_games()}
         if action == "save_game":
-            game = self.store.save_game(params.get("game"))
+            value = params.get("game")
+            previous = self.store.get_game(value["id"]) if isinstance(value, dict) and value.get("id") else None
+            game = self.store.save_game(value)
             try:
                 files = Shortcuts(self.paths, game["id"]).sync(game, params.get("shortcut_context"))
                 notice = sync_steam_shortcuts(self.paths, game, params.get("shortcut_context"))
+                artwork.remove_saved_artwork(self.paths, previous or game, game["artwork"].values())
                 return {"game": game, "shortcuts": files, "notice": notice}
             except (BackendError, OSError) as error:
                 return {"game": game, "warning": f"Game saved, but shortcuts could not be updated: {error}"}
@@ -150,6 +155,7 @@ class Service:
                 delete_prefix(game, self.store.get_settings(), self.store.list_games(), self.paths,
                               params.get("expected_prefix"))
             self.store.delete_game(game_id)
+            artwork.remove_saved_artwork(self.paths, game)
             return {}
         if action == "save_settings":
             return {"settings": self.store.save_settings(params.get("settings"))}

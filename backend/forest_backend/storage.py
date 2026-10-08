@@ -6,7 +6,7 @@ from uuid import uuid4
 from .common import BackendError, Paths, default_shared_prefix, default_game_prefix, expand_path, game_name
 from .steam import DEFAULT_PROTON
 from .lossless import default_options as default_lossless_options, validate_options as validate_lossless_options
-from .artwork import api_key, validate_artwork, KINDS as ARTWORK_KINDS
+from .artwork import api_key, validate_artwork, persisted_artwork, remove_saved_artwork, KINDS as ARTWORK_KINDS
 from .steamshortcuts import selected_accounts
 from .onlinefix import effective_game
 from .jsonfiles import private_directory, read_document, write_document
@@ -167,6 +167,7 @@ class Store:
             else:
                 if not old_file.exists() or read_document(old_file).get("id") != record.get("game_id"):
                     raise BackendError("An interrupted rename is missing its game document.")
+                remove_saved_artwork(self.paths, {"slug": new_slug})
             record_path.unlink()
 
     def close(self):
@@ -263,7 +264,9 @@ class Store:
         if previous and previous["slug"] != slug:
             rename_record = self.paths.state / "pending-saves" / (previous["slug"] + ".json")
             write_document(rename_record, {"game_id": identity, "old_slug": previous["slug"], "new_slug": slug})
-        write_document(self.paths.games_directory / (slug + ".json"), game)
+        with persisted_artwork(self.paths, slug, game["artwork"]) as saved_artwork:
+            game["artwork"] = saved_artwork
+            write_document(self.paths.games_directory / (slug + ".json"), game)
         if rename_record:
             (self.paths.games_directory / (previous["slug"] + ".json")).unlink()
             rename_record.unlink()

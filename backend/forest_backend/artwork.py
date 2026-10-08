@@ -13,10 +13,14 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 from .common import BackendError, expand_path
 from .shortcuts import atomic_write
+from .artworktemp import session_root
+from .jsonfiles import write_bytes
+from contextlib import contextmanager
 
 MAX_IMAGE = 16 * 1024 * 1024
 MAX_JSON = 2 * 1024 * 1024
 KINDS = ("icon", "grid", "hero", "logo")
+ARTWORK_DIRECTORIES = {"icon": "icon", "grid": "grid", "hero": "banner", "logo": "logo", "extracted_icon": "extracted-icon"}
 API = "https://www.steamgriddb.com/api/v2"
 ROMAN = {str(n): r for n, r in enumerate(("I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"), 1)}
 
@@ -39,7 +43,7 @@ def cache_bytes(paths, data):
     if not data or len(data) > MAX_IMAGE:
         raise BackendError("Artwork exceeds the 16 MiB limit.", "invalid_artwork")
     extension = image_extension(data)
-    root = paths.data / "artwork"
+    root = session_root()
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     if root.is_symlink():
         raise BackendError("Artwork directory must not be a symbolic link.")
@@ -57,7 +61,7 @@ def cache_bytes(paths, data):
                 raise BackendError("Artwork cache is full.")
             if entry.is_file(follow_symlinks=False): total += entry.stat(follow_symlinks=False).st_size
     if total + len(data) > 512 * 1024 * 1024:
-        raise BackendError("Artwork cache exceeds 512 MiB. Remove unused cached images before downloading more.")
+        raise BackendError("Temporary artwork exceeds 512 MiB. Close Forest to clear this session.")
     descriptor, temporary = tempfile.mkstemp(prefix=".forest-artwork-", dir=root)
     try:
         with os.fdopen(descriptor, "wb") as stream:
@@ -89,12 +93,15 @@ def managed_image(paths, value):
     if not value: return ""
     path = Path(value)
     root = paths.data / "artwork"
-    if root.is_symlink() or path.parent != root or not re.fullmatch(r"[a-f0-9]{64}\.(png|jpg|webp|ico)", path.name):
+    temporary = path.parent == session_root() and bool(re.fullmatch(r"[a-f0-9]{64}\.(png|jpg|webp|ico)", path.name))
+    saved = (path.parent.parent == root and path.parent.name in ARTWORK_DIRECTORIES.values()
+             and bool(re.fullmatch(r"[\w-]+\.(png|jpg|webp|ico)", path.name)))
+    if root.is_symlink() or path.parent.is_symlink() or not (temporary or saved):
         raise BackendError("Artwork must be imported into Forest before saving.")
     try:
         data = read_image(path)
-        if path.name != hashlib.sha256(data).hexdigest() + image_extension(data):
-            raise BackendError("Cached artwork does not match its identity.")
+        if temporary and path.name != hashlib.sha256(data).hexdigest() + image_extension(data):
+            raise BackendError("Temporary artwork does not match its identity.")
     except OSError:
         raise BackendError("Selected artwork is missing or unreadable.") from None
     return value
@@ -104,6 +111,53 @@ def validate_artwork(value, paths):
     if not isinstance(value, dict) or set(value) - {*KINDS, "extracted_icon"}:
         raise BackendError("Artwork contains unsupported fields.")
     return {key: managed_image(paths, item) for key, item in value.items()}
+
+
+@contextmanager
+def persisted_artwork(paths, slug, selected):
+    """Publish named assets on Save; restore old bytes if the game save fails."""
+    result = dict.fromkeys((*KINDS, "extracted_icon"), "")
+    payloads = {}
+    for kind, source in selected.items():
+        if not source:
+            continue
+        data = read_image(managed_image(paths, source))
+        target = paths.data / "artwork" / ARTWORK_DIRECTORIES[kind] / (slug + image_extension(data))
+        result[kind] = str(target)
+        payloads[target] = data
+    previous = {}
+    for target in payloads:
+        if target.is_symlink() or target.parent.is_symlink():
+            raise BackendError("Saved artwork must not be a symbolic link.")
+        previous[target] = read_image(target) if target.exists() else None
+    published = []
+    try:
+        for target, data in payloads.items():
+            write_bytes(target, data)
+            published.append(target)
+        yield result
+    except BaseException:
+        for target in reversed(published):
+            if previous[target] is None:
+                target.unlink(missing_ok=True)
+            else:
+                write_bytes(target, previous[target])
+        raise
+
+
+def remove_saved_artwork(paths, game, keep=()):
+    """Only remove this game's named assets, never arbitrary JSON paths."""
+    root = paths.data / "artwork"
+    if root.is_symlink():
+        raise BackendError("Artwork directory must not be a symbolic link.")
+    for directory in ARTWORK_DIRECTORIES.values():
+        parent = root / directory
+        if parent.is_symlink():
+            raise BackendError("Artwork directory must not be a symbolic link.")
+        for extension in (".png", ".jpg", ".webp", ".ico"):
+            path = parent / (game["slug"] + extension)
+            if str(path) not in keep and not path.is_symlink():
+                path.unlink(missing_ok=True)
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -215,7 +269,7 @@ def allowed_url(url):
 def download_image(paths, url):
     if not allowed_url(url):
         raise BackendError("Artwork downloads must use HTTPS on SteamGridDB.")
-    mapping = paths.data / "artwork-downloads" / (hashlib.sha256(url.encode()).hexdigest() + ".json")
+    mapping = session_root() / "downloads" / (hashlib.sha256(url.encode()).hexdigest() + ".json")
     try:
         if mapping.parent.is_symlink(): raise BackendError("Unsafe artwork download cache.")
         descriptor = os.open(mapping, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
