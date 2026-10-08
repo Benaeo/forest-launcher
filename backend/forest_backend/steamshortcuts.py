@@ -14,11 +14,12 @@ import re
 import struct
 import stat
 import tempfile
-from uuid import uuid4
+from datetime import datetime
 import zlib
 
 from .artwork import managed_image, read_image
 from .common import BackendError
+from .statefiles import ownership_path
 from .shortcuts import atomic_write, GAME_ID
 from .steam import native_steam_root, steam_client_running
 
@@ -174,7 +175,7 @@ def quoted(value):
 def sync(paths, game, context=None, *, remove=False):
     if not isinstance(game.get("id"), str) or not GAME_ID.fullmatch(game["id"]):
         raise BackendError("Invalid Steam shortcut game ID.")
-    manifest = paths.data / "steam-shortcuts" / (game["id"] + ".json")
+    manifest = ownership_path(paths, "steam-shortcuts", game["id"], game["slug"])
     try:
         descriptor = os.open(manifest, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
         with os.fdopen(descriptor, "rb") as stream:
@@ -296,7 +297,7 @@ def sync(paths, game, context=None, *, remove=False):
             combined = list(dict.fromkeys(known + [digest]))
             if len(combined) > 4: raise BackendError("Too many interrupted artwork updates; restore a backup before retrying.")
             recovery_assets[account][name] = combined
-    record = {"accounts": sorted(set(targets + old_accounts)), "context": context, "assets": recovery_assets, "appids": {**old_appids, **appids}}
+    record = {"game_id": game["id"], "accounts": sorted(set(targets + old_accounts)), "context": context, "assets": recovery_assets, "appids": {**old_appids, **appids}}
     atomic_write(manifest, json.dumps(record))
     # A running client is checked around publication, not from cached startup
     # state, because it is what can overwrite the freshly written snapshot.
@@ -304,7 +305,8 @@ def sync(paths, game, context=None, *, remove=False):
     for database, original, updated, config, writes, deletions in actions:
         if original:
             backup_root = paths.state / "steam-backups"
-            write_bytes(backup_root / (database.parent.parent.name + "-" + uuid4().hex + ".vdf"), original)
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
+            write_bytes(backup_root / (database.parent.parent.name + "-" + timestamp + ".vdf"), original)
             backups = sorted((path for path in backup_root.glob(database.parent.parent.name + "-*.vdf")
                               if path.is_file() and not path.is_symlink()), key=lambda path: path.stat().st_mtime_ns)
             for old_backup in backups[:-8]:
@@ -313,6 +315,9 @@ def sync(paths, game, context=None, *, remove=False):
         for name, data in writes.items(): write_bytes(config / "grid" / name, data)
         for target in deletions: target.unlink(missing_ok=True)
     steam_running = steam_running or steam_client_running()
-    atomic_write(manifest, json.dumps({"accounts": targets, "context": context, "assets": {key: value for key, value in new_assets.items() if key in targets}, "appids": appids}))
+    if targets:
+        atomic_write(manifest, json.dumps({"game_id": game["id"], "accounts": targets, "context": context, "assets": {key: value for key, value in new_assets.items() if key in targets}, "appids": appids}))
+    else:
+        manifest.unlink(missing_ok=True)
     if not steam_running: return ""
     return "Steam shortcuts updated. Restart Steam to refresh the library. If Steam was running, it may overwrite these changes; save again with Steam closed if they do not appear."

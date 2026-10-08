@@ -218,7 +218,7 @@ def launch_game(game: dict, settings: dict, paths: Paths, *, plan=None,
         log.write(("\nForest launch: " + shlex.join(plan.command) + "\n").encode("utf-8"))
         tracking = None
         if game["kind"] != "steam":
-            tracking, record = prepare_tracking(paths, game["id"])
+            tracking, record = prepare_tracking(paths, game["id"], game["slug"])
             environment[MARKER] = record["token"]
         try:
             process = subprocess.Popen(

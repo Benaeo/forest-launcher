@@ -114,7 +114,7 @@ class Service:
             previous = self.store.get_game(value["id"]) if isinstance(value, dict) and value.get("id") else None
             game = self.store.save_game(value)
             try:
-                files = Shortcuts(self.paths, game["id"]).sync(game, params.get("shortcut_context"))
+                files = Shortcuts(self.paths, game["id"], game["slug"]).sync(game, params.get("shortcut_context"))
                 notice = sync_steam_shortcuts(self.paths, game, params.get("shortcut_context"))
                 artwork.remove_saved_artwork(self.paths, previous or game, game["artwork"].values())
                 return {"game": game, "shortcuts": files, "notice": notice}
@@ -148,7 +148,7 @@ class Service:
                     raise BackendError("The prefix changed since confirmation. Reopen the removal dialog.", "prefix_changed")
             try:
                 sync_steam_shortcuts(self.paths, game, remove=True)
-                Shortcuts(self.paths, game_id).remove()
+                Shortcuts(self.paths, game["id"], game["slug"]).remove()
             except (BackendError, OSError) as error:
                 raise BackendError(f"Could not remove shortcuts; the library entry was kept: {error}", "shortcut_error")
             if delete:

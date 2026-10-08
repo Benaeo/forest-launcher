@@ -6,6 +6,7 @@ import re
 import tempfile
 
 from .common import BackendError, Paths, xdg_home, game_name
+from .statefiles import ownership_path
 
 
 GAME_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -55,12 +56,12 @@ def atomic_write(path: Path, content: str, mode=0o600):
 
 
 class Shortcuts:
-    def __init__(self, paths: Paths, game_id: str):
+    def __init__(self, paths: Paths, game_id: str, slug: str):
         if not isinstance(game_id, str) or not GAME_ID.fullmatch(game_id):
             raise BackendError("Invalid game ID for shortcut.")
         self.paths = paths
         self.game_id = game_id
-        self.manifest = paths.data / "shortcuts" / f"{game_id}.json"
+        self.manifest = ownership_path(paths, "shortcuts", game_id, slug)
         profile = hashlib.sha256(str(paths.data).encode()).hexdigest()
         self.marker = f"X-Forest-Owner={profile}:{game_id}\n"
 

@@ -3,12 +3,13 @@ import fcntl
 import os
 
 from .common import BackendError
+from .jsonfiles import private_directory
 
 
 @contextmanager
 def library_operation(paths):
-    paths.data.mkdir(parents=True, exist_ok=True)
-    descriptor = os.open(paths.data / "operations.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    private_directory(paths.state)
+    descriptor = os.open(paths.state / "operations.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)

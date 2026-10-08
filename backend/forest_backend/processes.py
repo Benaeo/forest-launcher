@@ -4,9 +4,11 @@ import json
 import os
 from pathlib import Path
 import signal
+import time
 from uuid import UUID, uuid4
 
-from .common import BackendError
+from .common import BackendError, game_name
+from .jsonfiles import private_directory, read_document, write_document
 
 MARKER = "FOREST_LAUNCH_TOKEN"
 # Shared Wine services are not game processes. Killing them can disrupt another game.
@@ -42,12 +44,13 @@ def snapshot_all():
             if path.name.isdecimal() and (snapshot := process_snapshot(int(path.name))) is not None}
 
 
-def prepare_tracking(paths, game_id):
+def prepare_tracking(paths, game_id, slug):
     directory = paths.state / "running"
-    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    private_directory(directory)
     token = str(uuid4())
-    path = directory / (token + ".json")
-    record = {"game_id": game_id, "token": token, "pid": 0, "start": 0}
+    name = game_name(slug) + "-" + token[:8]
+    path = directory / (name + ".json")
+    record = {"game_id": game_id, "slug": slug, "token": token, "pid": 0, "start": 0}
     with path.open("x", encoding="utf-8") as output:
         path.chmod(0o600)
         json.dump(record, output)
@@ -58,31 +61,28 @@ def finish_tracking(path, record, pid):
     record["pid"] = pid
     state = process_snapshot(pid)
     record["start"] = state["start"] if state and state["token"] == record["token"] else 0
-    temporary = path.with_suffix(".tmp")
-    with temporary.open("x", encoding="utf-8") as output:
-        temporary.chmod(0o600)
-        json.dump(record, output)
-    temporary.replace(path)
+    write_document(path, record)
 
 
 def records(paths):
     directory = paths.state / "running"
-    if not directory.is_dir():
+    if directory.is_symlink() or not directory.is_dir():
         return []
     result = []
     for path in directory.glob("*.json"):
         try:
             if path.is_symlink() or path.stat().st_uid != os.getuid():
                 continue
-            record = json.loads(path.read_text(encoding="utf-8"))
+            record = read_document(path)
             if not isinstance(record, dict):
                 continue
-            if (record.get("token") != path.stem or UUID(record["token"]).version != 4
+            if (path.stem != game_name(record["slug"]) + "-" + record["token"][:8]
+                    or UUID(record["token"]).version != 4
                     or not isinstance(record.get("game_id"), str)
                     or type(record.get("pid")) is not int or type(record.get("start")) is not int):
                 continue
             result.append((path, record))
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError, BackendError):
             continue
     return result
 
@@ -110,7 +110,19 @@ def running_games(paths):
     if not entries:
         return []
     snapshots = snapshot_all()
-    return sorted({record["game_id"] for _, record in entries if owned_processes(record, snapshots)})
+    active = set()
+    for path, record in entries:
+        if owned_processes(record, snapshots):
+            active.add(record["game_id"])
+        else:
+            try:
+                # Allow time for spawn/tracking publication before pruning.
+                grace = 10 if record["pid"] > 0 else 180
+                if time.time() - path.stat().st_mtime > grace:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                pass
+    return sorted(active)
 
 
 def stop_game(paths, game):
