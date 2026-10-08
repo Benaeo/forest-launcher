@@ -10,7 +10,7 @@ from .operations import library_operation
 from .steam import discover_protons, native_steam_root
 from .storage import Store
 from .shortcuts import Shortcuts
-from . import artwork, news
+from . import artwork, news, startup
 from .artworktemp import cleanup_stale as cleanup_artwork
 from .icons import extract_icon
 from .steamshortcuts import accounts as steam_accounts, sync as sync_steam_shortcuts, steam_root as shortcut_steam_root
@@ -43,7 +43,7 @@ class Service:
     def dispatch(self, request: dict) -> dict:
         validate_request(request)
         action = request.get("action")
-        if action in ("save_game", "delete_game", "save_settings", "launch_game", "run_file", "stop_game", "relocate_lossless_scaling"):
+        if action in ("save_game", "delete_game", "save_settings", "launch_game", "run_file", "stop_game", "relocate_lossless_scaling", "finish_welcome", "dismiss_update"):
             with library_operation(self.paths):
                 return self._dispatch(request)
         return self._dispatch(request)
@@ -54,6 +54,13 @@ class Service:
         if action == "bootstrap":
             cleanup_downloads(self.paths)
             cleanup_artwork()
+            startup_status = {"kind": "none"}
+            if "launcher_version" in params:
+                try:
+                    startup_status = startup.check(self.paths, params["launcher_version"])
+                except BackendError as error:
+                    # A damaged notice record must not prevent using the library.
+                    startup_status = {"kind": "none", "error": str(error)}
             settings = self.store.get_settings()
             umu = UMUManager(self.paths).status()
             account_error = ""
@@ -63,7 +70,7 @@ class Service:
                 switchable_accounts = []
                 account_error = str(error)
             return {
-                "games": self.store.list_games(), "settings": settings,
+                "games": self.store.list_games(), "settings": settings, "startup": startup_status,
                 "steam_accounts": steam_accounts(self.paths),
                 "steam_switchable_accounts": switchable_accounts,
                 "steam_account_error": account_error,
@@ -74,6 +81,18 @@ class Service:
                 "umu": umu,
                 "paths": {"data": str(self.paths.data), "state": str(self.paths.state)},
             }
+        if action == "finish_welcome":
+            version = params.get("launcher_version")
+            startup.state_for_version(self.paths, version)
+            skip = params.get("skip")
+            if type(skip) is not bool:
+                raise BackendError("Skip must be true or false.")
+            settings = self.store.get_settings() if skip else self.store.save_settings(params.get("settings"))
+            startup.finish_welcome(self.paths, version)
+            return {"settings": settings}
+        if action == "dismiss_update":
+            startup.dismiss_update(self.paths, params.get("launcher_version"))
+            return {}
         if action == "detect_online_fix":
             return detect_support(params.get("path"))
         if action == "extract_icon":

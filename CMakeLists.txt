@@ -18,6 +18,7 @@ add_executable(forest-launcher
     src/settingsdialog.cpp
     src/mainwindow.cpp
     src/newsdialog.cpp
+    src/welcomedialog.cpp
     src/protonmanager.cpp
 )
 target_link_libraries(forest-launcher PRIVATE Qt6::Widgets)

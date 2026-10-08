@@ -33,6 +33,8 @@ private:
     void runFileSelected();
     void pollRunning();
     void showSettings(const QJsonObject &pendingSettings = {});
+    void showStartupFlow(const QJsonObject &startup);
+    void completeStartupFlow();
     void showError(const QString &message);
     void setBusy(bool busy);
     void runSmokeTest();
@@ -42,6 +44,8 @@ private:
     QString m_dataRoot;
     bool m_smokeTest;
     bool m_smokeStarted = false;
+    bool m_startupHandled = false;
+    bool m_startupInProgress = false;
     bool m_umuStarted = false;
     bool m_umuUpdating = false;
     bool m_busy = true;

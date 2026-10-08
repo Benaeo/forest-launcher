@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
     if (!dataRoot.isEmpty()) dataRoot = QFileInfo(dataRoot).absoluteFilePath();
     if (smoke) {
         temporary = std::make_unique<QTemporaryDir>();
-        if (!temporary->isValid()) { qCritical("Cannot create smoke test directory."); return 1; }
+        if (!temporary->isValid()) { qCritical("Cannot create isolated data directory."); return 1; }
         dataRoot = temporary->path();
     }
     QString backend = parser.value("backend-dir");

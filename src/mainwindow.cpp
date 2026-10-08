@@ -3,6 +3,7 @@
 #include "launchconfirmation.h"
 #include "gamedialog.h"
 #include "settingsdialog.h"
+#include "welcomedialog.h"
 #include "removegamedialog.h"
 #include "helpdialogs.h"
 #include "artworkui.h"
@@ -279,7 +280,9 @@ void MainWindow::setBusy(bool busy) {
 void MainWindow::refresh(const QString &selectedId) {
     const auto selection = selectedId.isEmpty() ? selectedGame().value("id").toString() : selectedId;
     setBusy(true);
-    m_backend->request("bootstrap", {}, [this, selection](const QJsonObject &data) {
+    const QJsonObject params = m_smokeTest ? QJsonObject{}
+        : QJsonObject{{"launcher_version", QCoreApplication::applicationVersion()}};
+    m_backend->request("bootstrap", params, [this, selection](const QJsonObject &data) {
         m_bootstrap = data;
         m_bootstrap.insert("frontend", QJsonObject{{"backend", m_shortcutContext.value("backend")}, {"data_root", m_dataRoot}});
         populateLibrary(selection);
@@ -289,8 +292,21 @@ void MainWindow::refresh(const QString &selectedId) {
         if (m_smokeTest && !m_smokeStarted) {
             m_smokeStarted = true;
             runSmokeTest();
-        } else if (!m_smokeTest && !m_umuStarted) {
-            prepareUmu();
+        } else if (!m_smokeTest) {
+            if (!m_startupHandled) {
+                m_startupHandled = true;
+                const auto startup = data.value("startup").toObject();
+                const auto kind = startup.value("kind").toString();
+                if (kind == "welcome") {
+                    m_startupInProgress = true;
+                    QTimer::singleShot(0, this, [this, startup] { showStartupFlow(startup); });
+                }
+                if (!startup.value("error").toString().isEmpty()) {
+                    qWarning().noquote() << "Startup notice:" << startup.value("error").toString();
+                    statusBar()->showMessage("Startup notices could not be loaded; the library is still available.", 10000);
+                }
+            }
+            if (!m_startupInProgress && !m_umuStarted) prepareUmu();
         }
         updateUmuStatus();
     }, [this](const QString &error) { setBusy(false); showError(error); });
@@ -383,7 +399,7 @@ void MainWindow::editGame(const QJsonObject &game) {
 }
 
 void MainWindow::addExecutable(const QString &path) {
-    if (m_busy) {
+    if (m_busy || m_startupInProgress) {
         QTimer::singleShot(100, this, [this, path] { addExecutable(path); });
         return;
     }
@@ -475,7 +491,7 @@ void MainWindow::runFileSelected() {
 }
 
 void MainWindow::pollRunning() {
-    if (m_busy || m_polling || m_bootstrap.isEmpty()) return;
+    if (m_busy || m_startupInProgress || m_polling || m_bootstrap.isEmpty()) return;
     m_polling = true;
     const auto generation = m_runningGeneration;
     m_backend->request("running_games", {}, [this, generation](const QJsonObject &data) {
@@ -486,6 +502,39 @@ void MainWindow::pollRunning() {
         m_bootstrap.insert("running", data.value("running"));
         updateSelection();
     }, [this](const QString &) { m_polling = false; });
+}
+
+void MainWindow::completeStartupFlow() {
+    m_startupInProgress = false;
+    setBusy(false);
+    if (!m_umuStarted) prepareUmu();
+}
+
+void MainWindow::showStartupFlow(const QJsonObject &startup) {
+    const auto version = startup.value("current_version").toString();
+    if (startup.value("kind").toString() == "welcome") {
+        auto *welcome = new WelcomeDialog(m_bootstrap, this);
+        connect(welcome, &QDialog::finished, this, [this, welcome, version](int result) {
+            const bool skip = result != QDialog::Accepted;
+            QJsonObject params{{"launcher_version", version}, {"skip", skip}};
+            if (!skip) params.insert("settings", welcome->settingsData());
+            setBusy(true);
+            m_backend->request("finish_welcome", params, [this, welcome](const QJsonObject &data) {
+                m_bootstrap.insert("settings", data.value("settings"));
+                welcome->deleteLater();
+                m_startupInProgress = false;
+                refresh();
+            }, [this, welcome](const QString &error) {
+                setBusy(false);
+                showError(error);
+                // Keep the entered draft available when validation/saving fails.
+                welcome->open();
+            });
+        });
+        welcome->open();
+        return;
+    }
+    completeStartupFlow();
 }
 
 void MainWindow::showSettings(const QJsonObject &pendingSettings) {
