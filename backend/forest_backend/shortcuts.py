@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 import tempfile
 
-from .common import BackendError, Paths, xdg_home
+from .common import BackendError, Paths, xdg_home, game_name
 
 
 GAME_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -60,7 +60,6 @@ class Shortcuts:
             raise BackendError("Invalid game ID for shortcut.")
         self.paths = paths
         self.game_id = game_id
-        self.filename = f"io.github.Benaeo.forest-launcher.game-{game_id}.desktop"
         self.manifest = paths.data / "shortcuts" / f"{game_id}.json"
         profile = hashlib.sha256(str(paths.data).encode()).hexdigest()
         self.marker = f"X-Forest-Owner={profile}:{game_id}\n"
@@ -76,7 +75,7 @@ class Shortcuts:
             return {}
 
     def owned(self, path: Path) -> bool:
-        if path.name != self.filename or path.is_symlink():
+        if path.suffix != ".desktop" or path.is_symlink():
             return False
         try:
             with path.open(encoding="utf-8") as stream:
@@ -99,10 +98,14 @@ class Shortcuts:
 
     def sync(self, game: dict, context=None):
         metadata = self.metadata()
+        title = re.sub(r"[\x00-\x1f/\\]", "-", game["title"]).strip()
         selected = [key for key in ("desktop_shortcut", "app_menu_shortcut") if game.get(key, False)]
         if not selected:
             self.remove()
             return []
+        if "desktop_shortcut" in selected and len((title + ".desktop").encode("utf-8")) > 255:
+            raise BackendError("The game title is too long for a shortcut filename.")
+        filename = title + ".desktop"
         context = context if context is not None else metadata.get("context")
         if not isinstance(context, dict):
             raise BackendError("Shortcut creation requires the Forest executable location. Save this game in Forest's Add/Edit dialog.")
@@ -130,11 +133,12 @@ class Shortcuts:
                 directory = desktop_directory()
             else:
                 directory = xdg_home("XDG_DATA_HOME", Path.home() / ".local/share") / "applications"
-            targets.append(directory / self.filename)
+            target_name = filename if key == "desktop_shortcut" else game_name(game["title"]) + ".desktop"
+            targets.append(directory / target_name)
         old_paths = [Path(value) for value in metadata.get("paths", []) if isinstance(value, str) and Path(value).is_absolute()]
         # Persist cleanup information before publishing any files, including partial failures.
         all_paths = list(dict.fromkeys([*old_paths, *targets]))
-        record = {"context": context, "paths": [str(path) for path in all_paths]}
+        record = {"game_id": self.game_id, "context": context, "paths": [str(path) for path in all_paths]}
         atomic_write(self.manifest, json.dumps(record))
         for path, key in zip(targets, selected):
             if (path.exists() or path.is_symlink()) and not self.owned(path):

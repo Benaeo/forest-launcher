@@ -618,8 +618,10 @@ void MainWindow::runSmokeTest() {
                 }
                 m_backend->request("delete_game", {{"id", game.value("id")}},
                     [this, failure, game](const QJsonObject &) {
-                    const auto filename = "/io.github.Benaeo.forest-launcher.game-" + game.value("id").toString() + ".desktop";
-                    if (QFileInfo::exists(m_dataRoot + "/desktop" + filename) || QFileInfo::exists(m_dataRoot + "/applications" + filename)) {
+                    const auto desktopName = "/" + game.value("title").toString() + ".desktop";
+                    const auto applicationName = "/" + game.value("slug").toString() + ".desktop";
+                    if (QFileInfo::exists(m_dataRoot + "/desktop" + desktopName)
+                        || QFileInfo::exists(m_dataRoot + "/applications" + applicationName)) {
                         failure("Shortcut cleanup failed."); return;
                     }
                     m_backend->request("list_games", {}, [failure](const QJsonObject &data) {
