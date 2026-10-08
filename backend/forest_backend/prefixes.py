@@ -3,14 +3,14 @@
 from pathlib import Path
 import shutil
 
-from .common import BackendError, default_shared_prefix
+from .common import BackendError, default_shared_prefix, default_game_prefix
 from .processes import running_games
 
 
 def effective_prefix(game, settings):
     if game["kind"] != "windows":
         return None
-    return Path(game["prefix"] or (Path(settings["prefix_root"]) / game["id"]))
+    return Path(game["prefix"] or default_game_prefix(game["title"], settings))
 
 
 def canonical_prefix(path):

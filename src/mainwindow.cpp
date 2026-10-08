@@ -346,8 +346,11 @@ void MainWindow::updateSelection() {
     m_type->setText(kind == "windows" ? "Windows · Proton / UMU" : kind == "steam" ? "Steam library" : "Native Linux");
     m_path->setText(game.value("path").toString());
     auto prefix = game.value("prefix").toString();
-    if (prefix.isEmpty()) prefix = m_bootstrap.value("settings").toObject().value("prefix_root").toString()
-        + "/" + game.value("id").toString();
+    if (prefix.isEmpty()) {
+        const auto settings = m_bootstrap.value("settings").toObject();
+        prefix = settings.value("prefix_directory").toString() + "/"
+            + (settings.value("prefix_naming").toString() == "default" ? QString("default") : game.value("slug").toString());
+    }
     m_prefix->setText(kind == "windows" ? prefix : "—");
     auto proton = game.value("proton").toString();
     if (proton == "default") proton = m_bootstrap.value("settings").toObject().value("default_proton").toString();
@@ -579,10 +582,11 @@ void MainWindow::runSmokeTest() {
     }
     qputenv("PATH", (m_dataRoot + "/bin:").toUtf8() + qgetenv("PATH"));
     const QJsonObject defaults{{"arguments", "--forest-smoke"}, {"tags", QJsonArray{"smoke-test"}},
-        {"environment", QJsonObject{{"FOREST_SMOKE", "1"}}}, {"prefix", m_dataRoot + "/shared-prefix"},
+        {"environment", QJsonObject{{"FOREST_SMOKE", "1"}}},
         {"mangohud", true}, {"prefer_sdl", true}, {"no_sleep", true},
         {"desktop_shortcut", true}, {"app_menu_shortcut", true}};
-    m_backend->request("save_settings", {{"settings", QJsonObject{{"default_proton", "Proton-CachyOS Latest"}, {"new_game_defaults", defaults}}}},
+    m_backend->request("save_settings", {{"settings", QJsonObject{{"default_proton", "Proton-CachyOS Latest"},
+        {"prefix_directory", m_dataRoot + "/prefixes"}, {"prefix_naming", "default"}, {"new_game_defaults", defaults}}}},
         [this, exe, failure](const QJsonObject &data) {
         m_bootstrap.insert("settings", data.value("settings"));
         GameDialog dialog({}, m_bootstrap, this);
@@ -606,7 +610,7 @@ void MainWindow::runSmokeTest() {
                 if (plan.value("mode").toString() != "umu"
                     || !plan.value("command").toArray().contains("--forest-smoke")
                     || plan.value("environment").toObject().value("FOREST_SMOKE").toString() != "1"
-                    || plan.value("prefix").toString() != m_dataRoot + "/shared-prefix"
+                    || plan.value("prefix").toString() != m_dataRoot + "/prefixes/default"
                     || plan.value("environment").toObject().value("MANGOHUD").toString() != "1"
                     || plan.value("environment").toObject().value("PROTON_PREFER_SDL").toString() != "1"
                     || plan.value("command").toArray().first().toString() != m_dataRoot + "/bin/systemd-inhibit") {

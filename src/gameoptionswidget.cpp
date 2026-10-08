@@ -505,10 +505,10 @@ void GameOptionsWidget::checkOnlineFix() {
 
 void GameOptionsWidget::setGameTitle(const QString &title) {
     if (!m_automaticPrefix) return;
-    auto name = title.trimmed().toLower();
-    name.replace(QRegularExpression("[\\s/\\\\]+"), "-");
-    while (name.startsWith('.')) name.remove(0, 1);
-    while (name.endsWith('.')) name.chop(1);
+    auto name = title.normalized(QString::NormalizationForm_KC).trimmed().toLower();
+    name.replace(QRegularExpression("[^\\p{L}\\p{N}-]+"), "-");
+    while (name.startsWith('-')) name.remove(0, 1);
+    while (name.endsWith('-')) name.chop(1);
     if (name.isEmpty()) name = "game";
     if (m_prefixMode == "default") name = "default";
     m_prefix->setText(QDir(m_prefixDirectory).filePath(name));

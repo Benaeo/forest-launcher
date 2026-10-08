@@ -5,7 +5,7 @@ import shlex
 import shutil
 import subprocess
 
-from .common import BackendError, Paths, expand_path
+from .common import BackendError, Paths, expand_path, default_game_prefix
 from .onlinefix import resolve_fake_app_id, effective_game
 from .lossless import launch_environment as lossless_environment
 from .processes import MARKER, prepare_tracking, finish_tracking, running_games
@@ -147,7 +147,7 @@ def base_plan(game: dict, settings: dict, paths: Paths, *, prepare_components=Fa
             raise BackendError("The native executable does not have execute permission.", "not_executable")
         return LaunchPlan([str(executable), *arguments], changes, str(executable.parent), log_path)
 
-    prefix = Path(game["prefix"] or (Path(settings["prefix_root"]) / game["id"]))
+    prefix = Path(game["prefix"] or default_game_prefix(game["title"], settings))
     steam_root = native_steam_root()
     online_fix = "online-fix" in game["tags"]
     proton = resolve_proton(game, settings, steam_root, native=online_fix)

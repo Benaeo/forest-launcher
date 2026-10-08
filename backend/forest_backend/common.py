@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import re
+import unicodedata
 
 
 class BackendError(Exception):
@@ -17,9 +19,17 @@ def default_shared_prefix() -> Path:
     return Path.home() / "Games/forest-launcher/default"
 
 
+def game_name(title: str) -> str:
+    name = re.sub(r"[^\w-]+|_+", "-", unicodedata.normalize("NFKC", title).strip().lower()).strip("-.")
+    if not name:
+        raise BackendError("The game title must contain a letter or number.")
+    if len(name.encode("utf-8")) > 180:
+        raise BackendError("The game title is too long for a filename; shorten it.")
+    return name
+
+
 def default_game_prefix(title: str, settings: dict) -> str:
-    import re
-    name = re.sub(r"[\s/\\]+", "-", title.strip().lower()).strip(".") or "game"
+    name = game_name(title)
     if settings.get("prefix_naming", "title") == "default":
         name = "default"
     return str(Path(settings["prefix_directory"]) / name)
@@ -54,10 +64,5 @@ class Paths:
         return self.config / "settings.json"
 
     @property
-    def database(self):
-        return self.data / "library.sqlite3"
-
-    @property
-    def default_prefix_root(self):
-        # Retained only to resolve legacy profiles with an empty prefix.
-        return self.data / "prefixes"
+    def games_directory(self):
+        return self.data / "games"

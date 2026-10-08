@@ -1,17 +1,16 @@
 from datetime import datetime, timezone
-import json
 import re
 import shlex
-import sqlite3
 from uuid import uuid4
 
-from .common import BackendError, Paths, default_shared_prefix, default_game_prefix, expand_path
+from .common import BackendError, Paths, default_shared_prefix, default_game_prefix, expand_path, game_name
 from .steam import DEFAULT_PROTON
 from .lossless import default_options as default_lossless_options, validate_options as validate_lossless_options
-from .artwork import api_key, validate_artwork
+from .artwork import api_key, validate_artwork, KINDS as ARTWORK_KINDS
 from .steamshortcuts import selected_accounts
 from .onlinefix import effective_game
 from .jsonfiles import private_directory, read_document, write_document
+from .operations import library_operation
 
 
 ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -141,139 +140,146 @@ def validate_game(value: dict) -> dict:
 class Store:
     def __init__(self, paths: Paths):
         self.paths = paths
-        paths.data.mkdir(parents=True, mode=0o700, exist_ok=True)
-        self.connection = sqlite3.connect(paths.database, timeout=10)
-        paths.database.chmod(0o600)
-        self.connection.execute("PRAGMA foreign_keys = ON")
-        schema_version = self.connection.execute("PRAGMA user_version").fetchone()[0]
-        if schema_version > 1:
-            self.close()
-            raise BackendError("This library was created by a newer Forest version.", "database_version")
-        self.connection.executescript("""
-            CREATE TABLE IF NOT EXISTS games (
-                id TEXT PRIMARY KEY,
-                document TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                last_launched TEXT NOT NULL DEFAULT ''
-            );
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-            PRAGMA user_version = 1;
-        """)
+        private_directory(paths.games_directory)
+        pending = paths.state / "pending-saves"
+        if pending.is_dir() and any(pending.glob("*.json")):
+            with library_operation(paths):
+                self._recover_renames(pending)
+
+    def _recover_renames(self, directory):
+        if directory.is_symlink():
+            raise BackendError("Pending-save directory must not be a symbolic link.")
+        for record_path in directory.glob("*.json"):
+            record = read_document(record_path)
+            old_slug, new_slug = record.get("old_slug", ""), record.get("new_slug", "")
+            if not isinstance(old_slug, str) or not isinstance(new_slug, str) or game_name(old_slug) != old_slug or game_name(new_slug) != new_slug:
+                raise BackendError("Invalid interrupted game rename record.")
+            old_file = self.paths.games_directory / (old_slug + ".json")
+            new_file = self.paths.games_directory / (new_slug + ".json")
+            if new_file.exists():
+                new_game = read_document(new_file)
+                if new_game.get("id") != record.get("game_id") or game_name(new_game.get("title", "")) != new_slug:
+                    raise BackendError("Interrupted rename conflicts with another game; nothing was deleted.")
+                if old_file.exists():
+                    if read_document(old_file).get("id") != record.get("game_id"):
+                        raise BackendError("Interrupted rename conflicts with the old game; nothing was deleted.")
+                    old_file.unlink()
+            else:
+                if not old_file.exists() or read_document(old_file).get("id") != record.get("game_id"):
+                    raise BackendError("An interrupted rename is missing its game document.")
+            record_path.unlink()
 
     def close(self):
-        self.connection.close()
-
-    @staticmethod
-    def decode(row) -> dict:
-        game = json.loads(row[1])
-        return {**game, "id": row[0], "created_at": row[2], "last_launched": row[3]}
+        pass
 
     def list_games(self) -> list[dict]:
-        rows = self.connection.execute("SELECT id, document, created_at, last_launched FROM games")
-        return sorted((self.decode(row) for row in rows), key=lambda game: game["title"].casefold())
+        games, identities = [], set()
+        for filename in sorted(self.paths.games_directory.glob("*.json")):
+            value = read_document(filename)
+            supported = {*default_game_options(), "title", "path", "id", "slug",
+                         "created_at", "last_launched", "steamgriddb_id", "artwork"}
+            if set(value) - supported:
+                raise BackendError(f"Unsupported game fields in {filename}.")
+            game = {**default_game_options(), **value, **validate_game(value)}
+            identity = text(value.get("id", ""), "Game ID", required=True, limit=128)
+            if not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", identity):
+                raise BackendError(f"Invalid internal game ID in {filename}.")
+            slug = game_name(game["title"])
+            if filename.stem != slug:
+                raise BackendError(f"Game filename must match its title: rename {filename.name} to {slug}.json.")
+            if identity in identities:
+                raise BackendError(f"Duplicate game ID in {filename}.")
+            identities.add(identity)
+            game["slug"] = slug
+            game["created_at"] = text(value.get("created_at", ""), "Creation date")
+            game["last_launched"] = text(value.get("last_launched", ""), "Last launch date")
+            game.update(validate_steam_defaults(game))
+            identity = game.get("steamgriddb_id")
+            if identity is not None and (type(identity) is not int or not 0 < identity <= 2147483647):
+                raise BackendError(f"Invalid SteamGridDB identity in {filename}.")
+            game["steamgriddb_id"] = identity
+            art = value.get("artwork", {})
+            if not isinstance(art, dict) or set(art) - {*ARTWORK_KINDS, "extracted_icon"}:
+                raise BackendError(f"Invalid artwork fields in {filename}.")
+            if any(not isinstance(item, str) or "\0" in item for item in art.values()):
+                raise BackendError(f"Invalid artwork paths in {filename}.")
+            game["artwork"] = {**dict.fromkeys((*ARTWORK_KINDS, "extracted_icon"), ""), **art}
+            games.append(game)
+        return sorted(games, key=lambda game: game["title"].casefold())
 
     def get_game(self, game_id: str) -> dict:
-        game_id = text(game_id, "Game ID", required=True, limit=128)
-        row = self.connection.execute(
-            "SELECT id, document, created_at, last_launched FROM games WHERE id = ?", (game_id,)
-        ).fetchone()
-        if not row:
-            raise BackendError("That game no longer exists in the library.", "not_found")
-        return self.decode(row)
+        game_id = text(game_id, "Game ID", required=True, limit=180)
+        for game in self.list_games():
+            if game_id in (game["id"], game["slug"]):
+                return game
+        raise BackendError("That game no longer exists in the library.", "not_found")
 
     def save_game(self, value: dict) -> dict:
         if not isinstance(value, dict):
             raise BackendError("Game must be an object.")
-        game_id = text(value.get("id", ""), "Game ID", limit=128)
-        creating = not game_id
-        if creating:
-            settings = self.get_settings()
-            combined = {**settings["new_game_defaults"], **value}
-            # Explicit per-game tags override the old tag-based default even
-            # when a client has not yet adopted the separate checkbox field.
-            if "tags" in value and "online_fix_requested" not in value and isinstance(value["tags"], list):
-                combined["online_fix_requested"] = any(isinstance(tag, str) and tag.strip().casefold() == "online-fix"
-                                                       for tag in value["tags"])
-            if combined["kind"] != "windows" and "tags" not in value:
-                combined["tags"] = [tag for tag in combined["tags"] if tag != "online-fix"]
-            game = validate_game(combined)
-            game["online_fix_requested"] = combined.get("online_fix_requested", "online-fix" in game["tags"])
-            game = effective_game(game)
-            game_id = str(uuid4())
-            if game["kind"] == "windows":
-                if not game["prefix"]:
-                    game["prefix"] = default_game_prefix(game["title"], settings)
-                if game["proton"] in ("", "default"):
-                    game["proton"] = settings["default_proton"]
-        else:
-            previous = self.get_game(game_id)
-            game = validate_game(value)
-            if "online_fix_requested" not in value and "online_fix_requested" in previous:
-                game["online_fix_requested"] = previous["online_fix_requested"]
-            game = effective_game(game)
-            if "lossless_scaling" not in value and "lossless_scaling" not in previous:
-                game.pop("lossless_scaling")
-            if game["kind"] == "windows" and not game["prefix"] and (previous["prefix"] or previous["kind"] != "windows"):
-                # Clearing an explicit prefix resets it; untouched legacy blanks stay legacy.
-                game["prefix"] = default_game_prefix(game["title"], self.get_settings())
-        if "steamgriddb_id" in value:
-            identity = value["steamgriddb_id"]
-            if identity is not None and (type(identity) is not int or not 0 < identity <= 2147483647):
-                raise BackendError("SteamGridDB game ID must be a positive integer.")
-            if identity is not None:
-                game["steamgriddb_id"] = identity
-        elif not creating and "steamgriddb_id" in previous:
-            game["steamgriddb_id"] = previous["steamgriddb_id"]
-        if "artwork" in value:
-            game["artwork"] = validate_artwork(value["artwork"], self.paths)
-        elif not creating and "artwork" in previous:
-            game["artwork"] = previous["artwork"]
-        steam_values = combined if creating else value
-        if "steam_shortcut" in steam_values or (not creating and "steam_shortcut" in previous):
-            selected = steam_values.get("steam_shortcut", previous.get("steam_shortcut", False) if not creating else False)
-            if creating and game["kind"] == "steam" and "steam_shortcut" not in value:
-                selected = False
-            if type(selected) is not bool:
-                raise BackendError("Steam shortcut must be true or false.")
-            game["steam_shortcut"] = selected
-            game["steam_accounts"] = selected_accounts(steam_values.get("steam_accounts", previous.get("steam_accounts", []) if not creating else []))
-            if selected and not game["steam_accounts"]:
-                raise BackendError("Select at least one Steam account for the shortcut.")
-            if selected and game["kind"] == "steam":
-                raise BackendError("Steam library games do not need an additional Steam shortcut.")
-        launch_account = steam_values.get("steam_launch_account", previous.get("steam_launch_account", "") if not creating else "")
-        game["steam_launch_account"] = ""
-        if game.get("online_fix_requested", "online-fix" in game["tags"]):
-            game["steam_launch_account"] = selected_accounts([launch_account])[0] if launch_account != "" else ""
-            if game["steam_launch_account"] and not 0 < int(game["steam_launch_account"]) <= 0xFFFFFFFF:
-                raise BackendError("Choose a valid Steam launch account.")
-        document = json.dumps(game, ensure_ascii=False)
-        with self.connection:
-            if not creating:
-                self.get_game(game_id)
-                self.connection.execute("UPDATE games SET document = ? WHERE id = ?", (document, game_id))
-            else:
-                self.connection.execute(
-                    "INSERT INTO games (id, document, created_at) VALUES (?, ?, ?)",
-                    (game_id, document, now()),
-                )
-        return self.get_game(game_id)
+        identity = text(value.get("id", ""), "Game ID", limit=128)
+        creating = not identity
+        settings = self.get_settings()
+        previous = None if creating else self.get_game(identity)
+        base = settings["new_game_defaults"] if creating else previous
+        combined = {**base, **value}
+        if isinstance(value.get("lossless_scaling"), dict):
+            combined["lossless_scaling"] = {**base["lossless_scaling"], **value["lossless_scaling"]}
+        if "tags" in value and "online_fix_requested" not in value and isinstance(value["tags"], list):
+            combined["online_fix_requested"] = any(isinstance(tag, str) and tag.strip().casefold() == "online-fix"
+                                                   for tag in value["tags"])
+        if combined.get("kind") != "windows" and "tags" not in value:
+            combined["tags"] = [tag for tag in combined.get("tags", []) if tag != "online-fix"]
+        game = validate_game(combined)
+        game["online_fix_requested"] = combined.get("online_fix_requested", False)
+        game = effective_game(game)
+        slug = game_name(game["title"])
+        identity = str(uuid4()) if creating else previous["id"]
+        for other in self.list_games():
+            if other["id"] != identity and (other["slug"] == slug or other["title"].casefold() == game["title"].casefold()):
+                raise BackendError("A game with this title or filename already exists.", "duplicate_game")
+        if game["kind"] == "windows":
+            if not game["prefix"]:
+                game["prefix"] = default_game_prefix(game["title"], settings)
+            if game["proton"] in ("", "default"):
+                game["proton"] = settings["default_proton"]
+        selected = combined.get("steam_shortcut", False)
+        if creating and game["kind"] == "steam" and "steam_shortcut" not in value:
+            selected = False
+        steam_values = validate_steam_defaults({**combined, "steam_shortcut": selected})
+        if selected and game["kind"] == "steam":
+            raise BackendError("Steam library games do not need an additional Steam shortcut.")
+        game.update(steam_values)
+        identity_sgdb = combined.get("steamgriddb_id")
+        if identity_sgdb is not None and (type(identity_sgdb) is not int or not 0 < identity_sgdb <= 2147483647):
+            raise BackendError("SteamGridDB game ID must be a positive integer.")
+        game["steamgriddb_id"] = identity_sgdb
+        game["artwork"] = validate_artwork(combined.get("artwork", {}), self.paths)
+        game["artwork"] = {**dict.fromkeys((*ARTWORK_KINDS, "extracted_icon"), ""), **game["artwork"]}
+        game.update({"id": identity, "slug": slug,
+                     "created_at": now() if creating else previous["created_at"],
+                     "last_launched": "" if creating else previous["last_launched"]})
+        rename_record = None
+        if previous and previous["slug"] != slug:
+            rename_record = self.paths.state / "pending-saves" / (previous["slug"] + ".json")
+            write_document(rename_record, {"game_id": identity, "old_slug": previous["slug"], "new_slug": slug})
+        write_document(self.paths.games_directory / (slug + ".json"), game)
+        if rename_record:
+            (self.paths.games_directory / (previous["slug"] + ".json")).unlink()
+            rename_record.unlink()
+        return game
 
     def delete_game(self, game_id: str):
-        self.get_game(game_id)
-        with self.connection:
-            self.connection.execute("DELETE FROM games WHERE id = ?", (game_id,))
+        game = self.get_game(game_id)
+        (self.paths.games_directory / (game["slug"] + ".json")).unlink()
 
     def mark_launched(self, game_id: str):
-        with self.connection:
-            self.connection.execute("UPDATE games SET last_launched = ? WHERE id = ?", (now(), game_id))
+        game = self.get_game(game_id)
+        game["last_launched"] = now()
+        write_document(self.paths.games_directory / (game["slug"] + ".json"), game)
 
     def get_settings(self) -> dict:
         defaults = {
-            "prefix_root": str(self.paths.default_prefix_root),
             "prefix_directory": str(default_shared_prefix().parent),
             "prefix_naming": "title",
             "default_proton": DEFAULT_PROTON,
@@ -290,6 +296,7 @@ class Store:
                 return defaults
             except FileExistsError:
                 saved = read_document(self.paths.settings_file)
+        saved.pop("prefix_root", None)  # Obsolete development-only prefix fallback.
         if set(saved) - set(defaults):
             raise BackendError("settings.json contains unsupported settings.")
         template = saved.get("new_game_defaults", {})
@@ -302,7 +309,7 @@ class Store:
                 template.get("lossless_scaling", {}), dict) else template["lossless_scaling"]
         defaults["new_game_defaults"] = {**validate_game_options(defaults["new_game_defaults"]),
                                          **validate_steam_defaults(defaults["new_game_defaults"])}
-        for key in ("prefix_root", "prefix_directory", "default_proton"):
+        for key in ("prefix_directory", "default_proton"):
             defaults[key] = text(defaults[key], key, required=True)
         if defaults["prefix_naming"] not in ("title", "default"):
             raise BackendError("Prefix naming must be title or default.")
@@ -335,7 +342,7 @@ class Store:
                 raise BackendError("Default icon source must be extracted or steamgriddb.")
         if "prefix_naming" in values and values["prefix_naming"] not in ("title", "default"):
             raise BackendError("Prefix naming must be title or default.")
-        for key in ("prefix_root", "prefix_directory", "default_proton"):
+        for key in ("prefix_directory", "default_proton"):
             if key in values:
                 values[key] = text(values[key], key, required=True)
         if "new_game_defaults" in values:
@@ -358,7 +365,6 @@ class Store:
             options["prefix"] = ""
             values["new_game_defaults"] = options
         settings.update(values)
-        settings["prefix_root"] = expand_path(settings["prefix_root"])
         settings["prefix_directory"] = expand_path(settings["prefix_directory"])
         write_document(self.paths.settings_file, settings)
         return settings
