@@ -254,10 +254,11 @@ MainWindow::MainWindow(QString backendDirectory, QString dataRoot, bool smokeTes
     connect(m_play, &QPushButton::clicked, this, &MainWindow::launchSelected);
     connect(m_edit, &QPushButton::clicked, this, [this] { editGame(selectedGame()); });
     connect(m_log, &QPushButton::clicked, this, [this] {
-        const auto path = m_bootstrap.value("paths").toObject().value("state").toString()
-            + "/logs/" + selectedGame().value("id").toString() + "/launch.log";
-        if (!QFile::exists(path)) showError("This game has no launch log yet.");
-        else QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+        const QDir directory(m_bootstrap.value("paths").toObject().value("state").toString()
+            + "/logs/" + selectedGame().value("slug").toString());
+        const auto logs = directory.entryInfoList({"*.log"}, QDir::Files | QDir::NoSymLinks, QDir::Time);
+        if (logs.isEmpty()) showError("This game has no launch log yet.");
+        else QDesktopServices::openUrl(QUrl::fromLocalFile(logs.first().absoluteFilePath()));
     });
     setBusy(true);
     refresh();

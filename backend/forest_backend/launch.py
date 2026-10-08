@@ -12,6 +12,7 @@ from .processes import MARKER, prepare_tracking, finish_tracking, running_games
 from .steam import discover_installed_protons, discover_protons, native_steam_root, runtime_command, steam_libraries
 from .steamaccount import prepare_account
 from .umu import ensure_umu, find_umu
+from .launchlogs import log_path as new_log_path, open_log, start_capture
 
 
 DLL_OVERRIDES = {
@@ -132,7 +133,7 @@ def base_plan(game: dict, settings: dict, paths: Paths, *, prepare_components=Fa
     game = effective_game(game)
     arguments = shlex.split(game["arguments"])
     changes = dict(game["environment"])
-    log_path = paths.state / "logs" / game["id"] / "launch.log"
+    log_path = new_log_path(paths, game)
     if game["kind"] == "steam":
         steam = shutil.which("steam")
         if not steam:
@@ -212,24 +213,29 @@ def launch_game(game: dict, settings: dict, paths: Paths, *, plan=None,
         environment.pop(key, None)
     if plan.mode == "online-fix":
         environment.pop("UMU_ID", None)
-    plan.log_path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-    descriptor = os.open(plan.log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    with os.fdopen(descriptor, "ab", buffering=0) as log:
-        log.write(("\nForest launch: " + shlex.join(plan.command) + "\n").encode("utf-8"))
-        tracking = None
+    descriptor = open_log(plan.log_path)
+    read_end, write_end = os.pipe()
+    tracking, process = None, None
+    try:
+        os.write(descriptor, ("Forest launch: " + shlex.join(plan.command) + "\n").encode("utf-8"))
+        start_capture(descriptor, read_end)
         if game["kind"] != "steam":
             tracking, record = prepare_tracking(paths, game["id"], game["slug"])
             environment[MARKER] = record["token"]
-        try:
-            process = subprocess.Popen(
-                plan.command, cwd=plan.cwd, env=environment, stdin=subprocess.DEVNULL,
-                stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
-            )
-        except Exception:
-            if tracking:
-                tracking.unlink(missing_ok=True)
-            raise
+        environment.pop("FOREST_ARTWORK_SESSION", None)
+        process = subprocess.Popen(
+            plan.command, cwd=plan.cwd, env=environment, stdin=subprocess.DEVNULL,
+            stdout=write_end, stderr=subprocess.STDOUT, start_new_session=True,
+        )
         if tracking:
             finish_tracking(tracking, record, process.pid)
+    except Exception:
+        if tracking and process is None:
+            tracking.unlink(missing_ok=True)
+        raise
+    finally:
+        os.close(read_end)
+        os.close(write_end)
+        os.close(descriptor)
     return {**plan.public(), "pid": process.pid, "game_id": game["id"],
             "steam_account": account.get("account") if plan.mode == "online-fix" else None}

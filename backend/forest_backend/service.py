@@ -114,6 +114,11 @@ class Service:
             previous = self.store.get_game(value["id"]) if isinstance(value, dict) and value.get("id") else None
             game = self.store.save_game(value)
             try:
+                if previous and previous["slug"] != game["slug"]:
+                    old_logs = self.paths.state / "logs" / previous["slug"]
+                    new_logs = self.paths.state / "logs" / game["slug"]
+                    if old_logs.is_dir() and not old_logs.is_symlink() and not new_logs.exists():
+                        old_logs.rename(new_logs)
                 files = Shortcuts(self.paths, game["id"], game["slug"]).sync(game, params.get("shortcut_context"))
                 notice = sync_steam_shortcuts(self.paths, game, params.get("shortcut_context"))
                 artwork.remove_saved_artwork(self.paths, previous or game, game["artwork"].values())
