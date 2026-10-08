@@ -50,6 +50,10 @@ class Paths:
         )
 
     @property
+    def settings_file(self):
+        return self.config / "settings.json"
+
+    @property
     def database(self):
         return self.data / "library.sqlite3"
 

@@ -11,6 +11,7 @@ from .lossless import default_options as default_lossless_options, validate_opti
 from .artwork import api_key, validate_artwork
 from .steamshortcuts import selected_accounts
 from .onlinefix import effective_game
+from .jsonfiles import private_directory, read_document, write_document
 
 
 ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -281,20 +282,39 @@ class Store:
             "default_icon_source": "extracted",
             "new_game_defaults": default_game_options(),
         }
-        for key, value in self.connection.execute("SELECT key, value FROM settings"):
-            if key == "new_game_defaults":
-                saved = json.loads(value)
-                defaults[key].update(saved)
-                # Read-time compatibility only; do not rewrite the saved
-                # template or any existing profile during bootstrap.
-                defaults[key]["online_fix_requested"] = saved.get("online_fix_requested",
-                    "online-fix" in saved.get("tags", []))
-            elif key in defaults:
-                defaults[key] = json.loads(value)
+        try:
+            saved = read_document(self.paths.settings_file)
+        except FileNotFoundError:
+            try:
+                write_document(self.paths.settings_file, defaults, exclusive=True)
+                return defaults
+            except FileExistsError:
+                saved = read_document(self.paths.settings_file)
+        if set(saved) - set(defaults):
+            raise BackendError("settings.json contains unsupported settings.")
+        template = saved.get("new_game_defaults", {})
+        if not isinstance(template, dict) or set(template) - set(default_game_options()):
+            raise BackendError("new_game_defaults must contain only supported game options in settings.json.")
+        defaults.update({key: value for key, value in saved.items() if key != "new_game_defaults"})
+        defaults["new_game_defaults"].update(template)
+        defaults["new_game_defaults"]["lossless_scaling"] = {
+            **default_lossless_options(), **template.get("lossless_scaling", {})} if isinstance(
+                template.get("lossless_scaling", {}), dict) else template["lossless_scaling"]
+        defaults["new_game_defaults"] = {**validate_game_options(defaults["new_game_defaults"]),
+                                         **validate_steam_defaults(defaults["new_game_defaults"])}
+        for key in ("prefix_root", "prefix_directory", "default_proton"):
+            defaults[key] = text(defaults[key], key, required=True)
+        if defaults["prefix_naming"] not in ("title", "default"):
+            raise BackendError("Prefix naming must be title or default.")
+        if type(defaults["close_after_launch"]) is not bool:
+            raise BackendError("Close after launch must be true or false.")
+        defaults["steamgriddb_api_key"] = api_key(defaults["steamgriddb_api_key"])
+        if defaults["default_icon_source"] not in ("extracted", "steamgriddb"):
+            raise BackendError("Default icon source must be extracted or steamgriddb.")
+        defaults["prefix_directory"] = expand_path(defaults["prefix_directory"])
         if defaults["default_proton"] in ("", "default", "auto"):
             defaults["default_proton"] = DEFAULT_PROTON
         # Prefix preferences are separate from the per-game options template.
-        # Existing game documents (including legacy blank prefixes) are untouched.
         defaults["new_game_defaults"]["prefix"] = ""
         return defaults
 
@@ -340,11 +360,5 @@ class Store:
         settings.update(values)
         settings["prefix_root"] = expand_path(settings["prefix_root"])
         settings["prefix_directory"] = expand_path(settings["prefix_directory"])
-        with self.connection:
-            for key, value in settings.items():
-                self.connection.execute(
-                    "INSERT INTO settings (key, value) VALUES (?, ?) "
-                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                    (key, json.dumps(value)),
-                )
+        write_document(self.paths.settings_file, settings)
         return settings
