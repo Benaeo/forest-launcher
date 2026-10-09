@@ -1,8 +1,8 @@
 #pragma once
 
 #include "artworkui.h"
+#include "artworklist.h"
 #include <QJsonArray>
-#include <QListWidget>
 #include <QQueue>
 #include <QScrollBar>
 #include <QSet>
@@ -23,7 +23,6 @@ public:
         : QDialog(parent), m_bootstrap(std::move(bootstrap)), m_artwork(std::move(artwork)),
           m_identityTitle(title.trimmed()), m_gameId(gameId), m_sequence(sequence) {
         setObjectName("artworkDialog");
-        resize(1040, 720);
         setMinimumSize(660, 470);
         m_layout = new QVBoxLayout(this);
         m_search = new QLineEdit(title, this);
@@ -50,14 +49,9 @@ public:
             connect(m_back, &QPushButton::clicked, this, [this] { goToStep(m_step - 1); });
             connect(m_next, &QPushButton::clicked, this, [this] { goToStep(m_step + 1); });
         }
-        m_list = new QListWidget(this);
+        m_list = new ArtworkList(this);
         m_list->setObjectName("artworkImages");
-        m_list->setViewMode(QListView::IconMode);
-        m_list->setResizeMode(QListView::Adjust);
-        m_list->setMovement(QListView::Static);
-        m_list->setIconSize(thumbnailSize());
-        m_list->setSpacing(6);
-        m_list->setUniformItemSizes(true);
+        m_list->setThumbnailSize(thumbnailSize());
         m_layout->addWidget(m_list, 1);
         m_status = new QLabel(m_list->viewport());
         m_status->setObjectName("artworkStatus");
@@ -114,6 +108,8 @@ public:
         connect(m_list, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) { select(item); });
         updateTitle();
         updateSelectionStatus();
+        updateMinimumWidth();
+        resize(qMax(1040, minimumWidth()), 720);
     }
     QJsonObject artworkData() const { return m_artwork; }
     int gameId() const { return m_resolvedGames.value(m_identityTitle, m_gameId); }
@@ -127,20 +123,31 @@ public:
         QTimer::singleShot(0, this, [this] { search(m_search->text().trimmed()); });
     }
 protected:
+    void changeEvent(QEvent *event) override {
+        QDialog::changeEvent(event);
+        if (event->type() == QEvent::StyleChange)
+            QTimer::singleShot(0, this, [this] { updateMinimumWidth(); });
+    }
     bool eventFilter(QObject *object, QEvent *event) override {
         if (object == m_list->viewport() && event->type() == QEvent::Resize) m_status->setGeometry(m_list->viewport()->rect());
         return QDialog::eventFilter(object, event);
     }
 private:
     static QStringList kinds() { return {"icon", "grid", "hero", "logo"}; }
+    static QSize bannerThumbnailSize() { return {480, 155}; }
     QSize thumbnailSize() const {
         if (currentKind() == "grid") return {150, 225};
-        if (currentKind() == "hero") return {480, 155};
+        if (currentKind() == "hero") return bannerThumbnailSize();
         if (currentKind() == "logo") return {300, 100};
         return {150, 150};
     }
+    void updateMinimumWidth() {
+        if (!m_sequence) return;
+        const auto margins = m_layout->contentsMargins();
+        setMinimumWidth(m_list->widthForColumns(2, bannerThumbnailSize()) + margins.left() + margins.right());
+    }
     void updateTitle() {
-        m_list->setIconSize(thumbnailSize());
+        m_list->setThumbnailSize(thumbnailSize());
         setWindowTitle(currentKind() == "icon" ? "Choose an icon" : currentKind() == "grid" ? "Choose a grid"
             : currentKind() == "hero" ? "Choose a hero / banner" : "Choose a logo");
         if (m_sequence) {
@@ -267,7 +274,7 @@ private:
                         item->setData(Qt::UserRole, url);
                         item->setData(Qt::UserRole + 1, image.value("thumb"));
                         item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
-                        item->setSizeHint(thumbnailSize() + QSize(14, 14));
+                        item->setSizeHint(m_list->tileSize());
                         m_thumbnails.enqueue(m_list->count() - 1);
                     }
                     // A filtered/duplicate-only page must not hide later results.
@@ -414,7 +421,7 @@ private:
             for (int row = 0; row < m_rows.size(); ++row) {
                 const auto &cached = m_rows[row];
                 auto *item = new QListWidgetItem(m_list);
-                item->setSizeHint(thumbnailSize() + QSize(14, 14));
+                item->setSizeHint(m_list->tileSize());
                 item->setData(Qt::UserRole, cached.url);
                 item->setData(Qt::UserRole + 1, cached.thumb);
                 m_seen.insert(cached.url);
@@ -432,7 +439,7 @@ private:
     QJsonObject m_bootstrap, m_artwork;
     QVBoxLayout *m_layout;
     QLineEdit *m_search;
-    QListWidget *m_list;
+    ArtworkList *m_list;
     QLabel *m_error, *m_status;
     QLabel *m_selectionStatus;
     QPushButton *m_retrySelections;
