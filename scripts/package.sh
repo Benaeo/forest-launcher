@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
-# Build in an isolated distro container; never install dependencies on the host.
+# Package the shared baseline binary in an isolated target distro container.
+# No C++ compilation here: target-distro Qt must not raise the release baseline.
 set -euo pipefail
+export LC_ALL=C.UTF-8 PYTHONDONTWRITEBYTECODE=1
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-target="${1:?Usage: package.sh arch|deb|fedora44}"
+target="${1:?Usage: package.sh arch|deb|fedora44 BASELINE_STAGE}"
+source_stage="$(realpath "${2:?Supply the stage produced by build-native.sh}")"
 case "$target" in arch|deb|fedora44) ;; *) exit 2 ;; esac
 [[ "$(uname -m)" == x86_64 ]] || { echo "Release packages require x86_64." >&2; exit 1; }
 version="$(python3 "$root/scripts/release.py" version)"
 work="$root/build/package-$target"
 output="$root/build/release-output"
 [[ ! -e "$work" ]] || { echo "Use a fresh packaging directory: $work" >&2; exit 1; }
-mkdir -p "$work" "$output"
-cmake -S "$root" -B "$work/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib
-cmake --build "$work/build" --parallel 2
-DESTDIR="$work/stage" cmake --install "$work/build"
+python3 "$root/scripts/native.py" verify --binary "$source_stage/usr/bin/forest-launcher"
+qt_min="$(python3 "$root/scripts/native.py" minimum --library qt)"
+glibc_min="$(python3 "$root/scripts/native.py" minimum --library glibc)"
+gcc_min="$(python3 "$root/scripts/native.py" minimum --library gcc)"
+mkdir -p "$work/stage" "$output"
+cp -a "$source_stage/usr" "$work/stage/"
 # Run away from the source backend and require the installed copy explicitly.
 (
     cd "$work"
-    QT_QPA_PLATFORM=offscreen "$work/stage/usr/bin/forest-launcher" \
+    QT_QPA_PLATFORM=offscreen timeout 20s "$work/stage/usr/bin/forest-launcher" --version | grep -Fx "forest-launcher $version"
+    QT_QPA_PLATFORM=offscreen timeout 20s "$work/stage/usr/bin/forest-launcher" \
         --backend-dir "$work/stage/usr/share/forest-launcher/backend" --smoke-test
 )
 case "$target" in
@@ -31,7 +36,7 @@ pkgdesc='Native Qt game launcher with a headless Python backend'
 arch=('x86_64')
 url='https://github.com/Benaeo/forest-launcher'
 license=('GPL-3.0-only')
-depends=('qt6-base>=6.4' 'python>=3.11')
+depends=('qt6-base>=$qt_min' 'glibc>=$glibc_min' 'gcc-libs>=$gcc_min' 'libglvnd' 'python>=3.11')
 optdepends=('steam: Steam integration' 'mangohud: performance overlay'
             'lsfg-vk: optional frame generation')
 options=('!debug')
@@ -44,7 +49,8 @@ EOF
         # Inspect and smoke-test the actual archive, not only its staging tree.
         mkdir "$work/extracted"
         tar -xf "$package" -C "$work/extracted"
-        QT_QPA_PLATFORM=offscreen "$work/extracted/usr/bin/forest-launcher" \
+        python3 "$root/scripts/native.py" verify --binary "$work/extracted/usr/bin/forest-launcher"
+        QT_QPA_PLATFORM=offscreen timeout 20s "$work/extracted/usr/bin/forest-launcher" \
             --backend-dir "$work/extracted/usr/share/forest-launcher/backend" --smoke-test
         # pkgrel remains required metadata, not part of the download name.
         cp "$package" "$output/forest-launcher-$version-x86_64.pkg.tar.zst"
@@ -62,7 +68,7 @@ Section: games
 Priority: optional
 Architecture: amd64
 Maintainer: Forest Launcher contributors <noreply@github.com>
-Depends: python3 (>= 3.11), $shlibs
+Depends: python3 (>= 3.11), qt6-qpa-plugins (>= $qt_min), $shlibs
 Suggests: steam-installer, mangohud, lsfg-vk
 Homepage: https://github.com/Benaeo/forest-launcher
 Description: Native Qt game launcher for Linux
@@ -73,7 +79,8 @@ EOF
         dpkg-deb --root-owner-group --build "$work/stage" "$package"
         dpkg-deb --info "$package"
         dpkg-deb --extract "$package" "$work/extracted"
-        QT_QPA_PLATFORM=offscreen "$work/extracted/usr/bin/forest-launcher" \
+        python3 "$root/scripts/native.py" verify --binary "$work/extracted/usr/bin/forest-launcher"
+        QT_QPA_PLATFORM=offscreen timeout 20s "$work/extracted/usr/bin/forest-launcher" \
             --backend-dir "$work/extracted/usr/share/forest-launcher/backend" --smoke-test
         ;;
     fedora44)
@@ -86,7 +93,7 @@ Summary: Native Qt game launcher for Linux
 License: GPL-3.0-only
 URL: https://github.com/Benaeo/forest-launcher
 Requires: python3 >= 3.11
-Requires: qt6-qtbase-gui >= 6.4
+Requires: qt6-qtbase-gui >= $qt_min
 Suggests: steam
 Suggests: mangohud
 Suggests: lsfg-vk
@@ -109,7 +116,8 @@ EOF
         rpm -qp --requires "$package"
         mkdir "$work/extracted"
         (cd "$work/extracted"; rpm2cpio "$package" | cpio -idm --quiet)
-        QT_QPA_PLATFORM=offscreen "$work/extracted/usr/bin/forest-launcher" \
+        python3 "$root/scripts/native.py" verify --binary "$work/extracted/usr/bin/forest-launcher"
+        QT_QPA_PLATFORM=offscreen timeout 20s "$work/extracted/usr/bin/forest-launcher" \
             --backend-dir "$work/extracted/usr/share/forest-launcher/backend" --smoke-test
         # RPM Release remains required metadata, not part of the download name.
         cp "$package" "$output/forest-launcher-$version.fc44.x86_64.rpm"

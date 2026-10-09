@@ -6,6 +6,9 @@ on:
 permissions:
   contents: read
 jobs:
+  native-packages:
+    uses: ./.github/workflows/native-packages.yml
+
   linux:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

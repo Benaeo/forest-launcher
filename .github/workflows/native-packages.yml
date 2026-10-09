@@ -1,0 +1,167 @@
+name: Build and verify native packages
+
+# Reused by branch/PR CI and by the tagged release workflow; never publishes.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.source.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Read the source version without requiring a release tag
+        id: source
+        run: |
+          version="$(PYTHONDONTWRITEBYTECODE=1 python3 scripts/release.py version)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  native-build:
+    needs: source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build once against the Qt 6.4.2 and system-library baseline
+        run: |
+          docker run --rm --platform linux/amd64 \
+            -v "$PWD:/work" -w /work ubuntu:24.04 bash -euo pipefail -c '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends build-essential cmake ninja-build \
+                qt6-base-dev qt6-qpa-plugins python3 ca-certificates binutils
+              bash scripts/build-native.sh
+            '
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          # Keep the intermediate artifact outside the release-* publish pattern.
+          name: native-baseline-stage
+          path: build/native-stage.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  packages:
+    needs: native-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Update distro versions deliberately, after compatibility testing.
+          # These containers package the baseline binary; they never rebuild it.
+          - target: arch
+            image: archlinux:base
+          - target: deb
+            image: ubuntu:24.04
+          - target: fedora44
+            image: fedora:44
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: native-baseline-stage
+          path: build/native-input
+      - name: Extract the shared baseline install tree
+        run: |
+          mkdir -p build/native-stage
+          tar -xzf build/native-input/native-stage.tar.gz -C build/native-stage
+      - name: Package the baseline binary without recompiling against target Qt
+        env:
+          TARGET: ${{ matrix.target }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          docker run --rm --platform linux/amd64 \
+            -e TARGET -v "$PWD:/work" -w /work "$IMAGE" bash -euo pipefail -c '
+              case "$TARGET" in
+                arch)
+                  pacman -Syu --noconfirm --needed base-devel qt6-base libglvnd python git zstd
+                  useradd --create-home builder
+                  chown -R builder:builder /work
+                  runuser -u builder -- bash scripts/package.sh "$TARGET" /work/build/native-stage
+                  ;;
+                deb)
+                  export DEBIAN_FRONTEND=noninteractive
+                  apt-get update
+                  apt-get install -y --no-install-recommends libqt6widgets6t64 qt6-qpa-plugins \
+                    libglx0 libopengl0 python3 git dpkg-dev ca-certificates binutils
+                  bash scripts/package.sh "$TARGET" /work/build/native-stage
+                  ;;
+                fedora44)
+                  dnf install -y qt6-qtbase-gui python3 git binutils rpm-build rpmdevtools cpio tar gzip
+                  bash scripts/package.sh "$TARGET" /work/build/native-stage
+                  ;;
+              esac
+            '
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ matrix.target }}
+          path: build/release-output/*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  native-compatibility:
+    needs: [source, packages]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: deb
+            image: ubuntu:24.04
+          - target: deb
+            image: debian:13
+          - target: arch
+            image: archlinux:base
+          - target: fedora44
+            image: fedora:44
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-${{ matrix.target }}
+          path: build/package-test
+      - name: Install and run the actual package with only target runtime dependencies
+        env:
+          TARGET: ${{ matrix.target }}
+          IMAGE: ${{ matrix.image }}
+          RELEASE_VERSION: ${{ needs.source.outputs.version }}
+        run: |
+          docker run --rm --platform linux/amd64 \
+            -e TARGET -e RELEASE_VERSION -e DEBIAN_FRONTEND=noninteractive \
+            -v "$PWD/build/package-test:/packages:ro" "$IMAGE" bash -euo pipefail -c '
+              case "$TARGET" in
+                arch)
+                  pacman -Syu --noconfirm
+                  pacman -U --noconfirm /packages/forest-launcher-*-x86_64.pkg.tar.zst
+                  pacman -Q forest-launcher qt6-base glibc gcc-libs
+                  ;;
+                deb)
+                  apt-get update
+                  apt-get install -y --no-install-recommends -o APT::Install-Suggests=false \
+                    /packages/forest-launcher_*_amd64.deb
+                  dpkg --audit
+                  dpkg-query -W forest-launcher
+                  ;;
+                fedora44)
+                  dnf install -y --setopt=install_weak_deps=False /packages/forest-launcher-*.fc44.x86_64.rpm
+                  rpm -q forest-launcher qt6-qtbase-gui
+                  ;;
+              esac
+              QT_QPA_PLATFORM=offscreen timeout 20s forest-launcher --version | \
+                grep -Fx "forest-launcher $RELEASE_VERSION"
+              QT_QPA_PLATFORM=offscreen timeout 20s forest-launcher --smoke-test
+            '

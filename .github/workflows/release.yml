@@ -34,93 +34,10 @@ jobs:
 
   packages:
     needs: validate
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Update distro versions deliberately, after compatibility testing.
-          - target: arch
-            image: archlinux:base
-          # Build one shared .deb on the older supported Qt/glibc baseline.
-          - target: deb
-            image: ubuntu:24.04
-          - target: fedora44
-            image: fedora:44
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Build, package and verify installation in the target distro
-        env:
-          TARGET: ${{ matrix.target }}
-          IMAGE: ${{ matrix.image }}
-        run: |
-          docker run --rm --platform linux/amd64 \
-            -e TARGET -v "$PWD:/work" -w /work "$IMAGE" bash -euo pipefail -c '
-              case "$TARGET" in
-                arch)
-                  pacman -Syu --noconfirm --needed base-devel cmake ninja qt6-base python git zstd
-                  useradd --create-home builder
-                  chown -R builder:builder /work
-                  runuser -u builder -- bash scripts/package.sh "$TARGET"
-                  ;;
-                deb)
-                  export DEBIAN_FRONTEND=noninteractive
-                  apt-get update
-                  apt-get install -y --no-install-recommends build-essential cmake ninja-build \
-                    qt6-base-dev qt6-qpa-plugins qt6-wayland python3 git dpkg-dev ca-certificates
-                  bash scripts/package.sh "$TARGET"
-                  ;;
-                fedora44)
-                  dnf install -y gcc-c++ cmake ninja-build qt6-qtbase-devel python3 git \
-                    rpm-build rpmdevtools cpio
-                  bash scripts/package.sh "$TARGET"
-                  ;;
-              esac
-            '
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: release-${{ matrix.target }}
-          path: build/release-output/*
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
-
-  deb-compatibility:
-    needs: [validate, packages]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        image: [ubuntu:24.04, debian:13]
-    steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: release-deb
-          path: build/deb-test
-      - name: Install the same shared package in a clean target distro
-        env:
-          IMAGE: ${{ matrix.image }}
-          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
-        run: |
-          docker run --rm --platform linux/amd64 \
-            -e RELEASE_VERSION -e DEBIAN_FRONTEND=noninteractive \
-            -v "$PWD/build/deb-test:/packages:ro" "$IMAGE" bash -euo pipefail -c '
-              apt-get update
-              # Suggests are informational, not automatically installed tools.
-              apt-get install -y -o APT::Install-Suggests=false /packages/forest-launcher_*_amd64.deb
-              dpkg --audit
-              dpkg-query -W forest-launcher
-              QT_QPA_PLATFORM=offscreen forest-launcher --version | \
-                grep -Fx "forest-launcher $RELEASE_VERSION"
-              QT_QPA_PLATFORM=offscreen timeout 20s forest-launcher --smoke-test
-            '
+    uses: ./.github/workflows/native-packages.yml
 
   publish:
-    needs: [validate, packages, deb-compatibility]
+    needs: [validate, packages]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -158,10 +75,10 @@ jobs:
           if release.get("isDraft") is not True:
               raise SystemExit("This release is already public; refusing to overwrite its assets.")
           PY
-            gh release edit "$RELEASE_TAG" --notes-file build/release-notes.md
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" --notes-file build/release-notes.md
           else
             gh release create "$RELEASE_TAG" --verify-tag --draft \
-              --title "Forest Launcher $RELEASE_TAG" --notes-file build/release-notes.md
+              --title "$RELEASE_TAG" --notes-file build/release-notes.md
           fi
           # A failed upload leaves a draft, not a partially published release.
           gh release upload "$RELEASE_TAG" build/release-assets/* --clobber
