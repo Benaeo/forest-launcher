@@ -14,8 +14,8 @@
 #include <QPushButton>
 
 // Image-only browser. Matching titles are combined internally; the user never
-// chooses a database game or an artwork category. A click selects the icon or
-// advances the fixed icon -> grid -> hero -> logo sequence.
+// chooses a database game. Steam artwork clicks advance icon -> grid -> hero ->
+// logo, with Back/Next for review and an explicit Apply to confirm the draft.
 class ArtworkDialog : public QDialog {
 public:
     ArtworkDialog(QJsonObject bootstrap, QString title, QJsonObject artwork,
@@ -33,6 +33,23 @@ public:
         m_search->setPlaceholderText("Search…");
         m_search->setMaxLength(256);
         m_layout->addWidget(m_search);
+        if (m_sequence) {
+            auto *navigation = new QHBoxLayout;
+            m_back = new QPushButton("Back", this);
+            m_back->setObjectName("artworkBack");
+            m_back->setAutoDefault(false);
+            m_page = new QLabel(this);
+            m_page->setAlignment(Qt::AlignCenter);
+            m_next = new QPushButton("Next", this);
+            m_next->setObjectName("artworkNext");
+            m_next->setAutoDefault(false);
+            navigation->addWidget(m_back);
+            navigation->addWidget(m_page, 1);
+            navigation->addWidget(m_next);
+            m_layout->addLayout(navigation);
+            connect(m_back, &QPushButton::clicked, this, [this] { goToStep(m_step - 1); });
+            connect(m_next, &QPushButton::clicked, this, [this] { goToStep(m_step + 1); });
+        }
         m_list = new QListWidget(this);
         m_list->setObjectName("artworkImages");
         m_list->setViewMode(QListView::IconMode);
@@ -60,8 +77,23 @@ public:
         m_selectionStatus->hide();
         m_layout->addWidget(m_selectionStatus);
         m_retrySelections = new QPushButton("Retry selected image downloads", this);
+        m_retrySelections->setAutoDefault(false);
         m_retrySelections->hide();
         m_layout->addWidget(m_retrySelections);
+        if (m_sequence) {
+            auto *footer = new QHBoxLayout;
+            auto *close = new QPushButton("Close", this);
+            close->setObjectName("artworkClose");
+            close->setAutoDefault(false);
+            m_apply = new QPushButton("Apply", this);
+            m_apply->setObjectName("artworkApply");
+            m_apply->setAutoDefault(false);
+            footer->addWidget(close, 1);
+            footer->addWidget(m_apply, 1);
+            m_layout->addLayout(footer);
+            connect(close, &QPushButton::clicked, this, &QDialog::reject);
+            connect(m_apply, &QPushButton::clicked, this, [this] { if (canApply()) accept(); });
+        }
         const auto frontend = m_bootstrap.value("frontend").toObject();
         m_selectionBackend = new BackendClient(frontend.value("backend").toString(), frontend.value("data_root").toString(), this);
         connect(m_retrySelections, &QPushButton::clicked, this, [this] {
@@ -81,6 +113,7 @@ public:
         });
         connect(m_list, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) { select(item); });
         updateTitle();
+        updateSelectionStatus();
     }
     QJsonObject artworkData() const { return m_artwork; }
     QJsonObject settingsData() const { return m_bootstrap.value("settings").toObject(); }
@@ -102,6 +135,23 @@ private:
     void updateTitle() {
         setWindowTitle(currentKind() == "icon" ? "Choose an icon" : currentKind() == "grid" ? "Choose a grid"
             : currentKind() == "hero" ? "Choose a hero / banner" : "Choose a logo");
+        if (m_sequence) {
+            const QStringList names{"Icon", "Grid", "Hero / banner", "Logo"};
+            m_page->setText(QString("%1 of 4 — %2").arg(m_step + 1).arg(names.at(m_step)));
+            m_back->setEnabled(m_step > 0);
+            m_next->setEnabled(m_step < kinds().size() - 1);
+        }
+    }
+    void goToStep(int step) {
+        if (!m_sequence || m_selectionClosed || m_keyPrompt || step < 0 || step >= kinds().size() || step == m_step) return;
+        m_step = step;
+        updateTitle();
+        search(m_query, true);
+    }
+    bool canApply() const {
+        if (m_selectionClosed || !m_pendingSelections.isEmpty() || !m_selectionFailures.isEmpty()) return false;
+        for (const auto &kind : kinds()) if (m_artwork.value(kind).toString().isEmpty()) return false;
+        return true;
     }
     void status(const QString &message) { m_status->setText(message); m_status->setGeometry(m_list->viewport()->rect()); m_status->setVisible(!message.isEmpty()); }
     QString plural() const { return currentKind() == "hero" ? "banners" : currentKind() + "s"; }
@@ -246,10 +296,8 @@ private:
         m_selectionUrls.insert(selectedKind, url);
         // Move on before downloading/decoding the full image. Browser resets must
         // never cancel selected-image requests, which have their own backend.
-        if (m_sequence && m_step < 3) {
-            ++m_step;
-            updateTitle();
-            search(m_query, true);
+        if (m_sequence) {
+            if (m_step < 3) goToStep(m_step + 1);
         } else {
             m_selecting = true;
             m_list->setEnabled(false);
@@ -258,24 +306,30 @@ private:
         downloadSelection(selectedKind, url);
     }
     void downloadSelection(const QString &kind, const QString &url) {
-        ++m_selectionsPending;
+        const int revision = ++m_selectionRevisions[kind];
+        m_pendingSelections.insert(kind);
+        m_selectionFailures.remove(kind);
         updateSelectionStatus();
         m_selectionBackend->request("artwork_download", {{"url", url}},
-            [this, kind](const QJsonObject &data) {
-                if (m_selectionClosed) return;
+            [this, kind, revision](const QJsonObject &data) {
+                if (!isCurrentSelection(kind, revision)) return;
                 importArtworkImage(m_selectionBackend, data.value("path").toString(),
-                    [this, kind](const QJsonObject &normalized) {
-                        if (m_selectionClosed) return;
+                    [this, kind, revision](const QJsonObject &normalized) {
+                        if (!isCurrentSelection(kind, revision)) return;
                         m_artwork.insert(kind, normalized.value("path"));
-                        --m_selectionsPending;
+                        m_pendingSelections.remove(kind);
                         if (selectionChanged) selectionChanged(m_artwork);
                         updateSelectionStatus();
-                    }, [this, kind](const QString &message) { selectionError(kind, message); });
-            }, [this, kind](const QString &message) { selectionError(kind, message); });
+                    }, [this, kind, revision](const QString &message) { selectionError(kind, revision, message); });
+            }, [this, kind, revision](const QString &message) { selectionError(kind, revision, message); });
     }
-    void selectionError(const QString &kind, const QString &message) {
-        if (m_selectionClosed) return;
-        --m_selectionsPending;
+    bool isCurrentSelection(const QString &kind, int revision) const {
+        // Back/reselect may finish a newer download before an older one.
+        return !m_selectionClosed && m_selectionRevisions.value(kind) == revision;
+    }
+    void selectionError(const QString &kind, int revision, const QString &message) {
+        if (!isCurrentSelection(kind, revision)) return;
+        m_pendingSelections.remove(kind);
         m_selectionFailures.insert(kind, message);
         updateSelectionStatus();
     }
@@ -284,15 +338,23 @@ private:
         QStringList failures;
         for (auto it = m_selectionFailures.cbegin(); it != m_selectionFailures.cend(); ++it)
             failures.append(it.key() + ": " + it.value());
-        const auto message = !failures.isEmpty() ? failures.join("\n")
-            : m_selecting && m_selectionsPending > 0 ? QString("Finishing selected image downloads…") : QString();
+        QString message = !failures.isEmpty() ? failures.join("\n")
+            : !m_pendingSelections.isEmpty() ? QString("Finishing selected image downloads…") : QString();
+        if (m_sequence) {
+            m_apply->setEnabled(canApply());
+            if (message.isEmpty()) {
+                int count = 0;
+                for (const auto &kind : kinds()) if (!m_artwork.value(kind).toString().isEmpty()) ++count;
+                if (count < 4) message = QString("%1 of 4 selected.").arg(count);
+            }
+        }
         m_selectionStatus->setText(message);
         m_selectionStatus->setVisible(!message.isEmpty());
         m_retrySelections->setVisible(!m_selectionFailures.isEmpty());
         if (m_selecting) {
-            status(m_selectionsPending > 0 && m_selectionFailures.isEmpty()
+            status(!m_pendingSelections.isEmpty() && m_selectionFailures.isEmpty()
                 ? "Finishing selected image downloads…" : QString());
-            if (m_selectionsPending == 0 && m_selectionFailures.isEmpty()) accept();
+            if (m_pendingSelections.isEmpty() && m_selectionFailures.isEmpty()) accept();
         }
     }
     struct Game { int id, page; bool more; };
@@ -354,9 +416,12 @@ private:
     QLabel *m_error, *m_status;
     QLabel *m_selectionStatus;
     QPushButton *m_retrySelections;
+    QPushButton *m_back = nullptr, *m_next = nullptr, *m_apply = nullptr;
+    QLabel *m_page = nullptr;
     BackendClient *m_selectionBackend;
     QMap<QString, QString> m_selectionUrls, m_selectionFailures;
-    int m_selectionsPending = 0;
+    QMap<QString, int> m_selectionRevisions;
+    QSet<QString> m_pendingSelections;
     bool m_selectionClosed = false;
     QString m_query, m_waitingQuery;
     QString m_identityTitle;
