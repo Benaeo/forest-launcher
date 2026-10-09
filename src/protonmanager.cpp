@@ -171,7 +171,13 @@ void ProtonManager::download(int row) {
                     .arg(event.value("speed").toDouble() / 1048576.0, 0, 'f', 1));
             } else {
                 m_progress->setFormat(phase == "extract" ? "Extracting: %p%" : "%p%");
-                m_status->setText(phase == "verify" ? "Verifying checksum…" : phase == "extract" ? "Extracting and installing…" : "Download complete.");
+                m_status->setText(phase == "verify" ? "Verifying checksum…"
+                    : phase == "extract" && event.contains("unpacked_bytes")
+                        ? QString("Extracting: %1 entries — %2 MiB unpacked — %3 MiB/s")
+                            .arg(event.value("files").toInt())
+                            .arg(event.value("unpacked_bytes").toDouble() / 1048576.0, 0, 'f', 1)
+                            .arg(event.value("speed").toDouble() / 1048576.0, 0, 'f', 1)
+                    : phase == "extract" ? "Extracting and installing…" : "Download complete.");
             }
         });
 }

@@ -375,7 +375,12 @@ GameOptionsWidget::GameOptionsWidget(const QJsonObject &options, const QJsonObje
                 m_latestStatus->setText(phase == "download"
                     ? QString("%1 / %2 MiB — %3 MiB/s").arg(done / 1048576.0, 0, 'f', 1)
                         .arg(total / 1048576.0, 0, 'f', 1).arg(event.value("speed").toDouble() / 1048576.0, 0, 'f', 1)
-                    : phase == "verify" ? "Verifying checksum…" : "Extracting and installing…");
+                    : phase == "verify" ? "Verifying checksum…"
+                    : phase == "extract" && event.contains("unpacked_bytes")
+                        ? QString("Extracting: %1 MiB unpacked — %2 MiB/s")
+                            .arg(event.value("unpacked_bytes").toDouble() / 1048576.0, 0, 'f', 1)
+                            .arg(event.value("speed").toDouble() / 1048576.0, 0, 'f', 1)
+                    : "Extracting and installing…");
             });
     });
     connect(cancelDownload, &QPushButton::clicked, this, [this] {

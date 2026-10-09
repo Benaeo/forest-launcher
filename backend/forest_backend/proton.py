@@ -220,16 +220,25 @@ def extract_member(archive, member, destination, runner_root):
 
 
 def extract_archive(archive_path, destination, progress):
-    with tarfile.open(archive_path, 'r:*') as archive:
+    started = time.monotonic()
+    last = started
+    compressed_size = archive_path.stat().st_size
+    unpacked = 0
+    # Inspect and extract each entry once, inside the private staging directory.
+    # Scanning first used to decompress the whole archive, then rewind and
+    # decompress it again. Streaming also prevents accidental backward seeks.
+    with archive_path.open('rb') as source, tarfile.open(fileobj=source, mode='r|*', bufsize=64 * 1024) as archive:
         members = []
         total = 0
         root = None
+        runner_root = None
         for member in archive:
             name = PurePosixPath(member.name)
             if name.is_absolute() or '..' in name.parts or not name.parts:
                 raise BackendError('Unsafe path in Proton archive.')
             if root is None:
                 root = name.parts[0]
+                runner_root = destination.resolve() / root
             if name.parts[0] != root:
                 raise BackendError('Proton archive must contain one runner directory.')
             if not (member.isfile() or member.isdir() or member.issym() or member.islnk()):
@@ -245,15 +254,21 @@ def extract_archive(archive_path, destination, progress):
             members.append(member)
             if len(members) > MAX_MEMBERS or total > MAX_UNPACKED:
                 raise BackendError('Proton archive exceeds extraction limits.')
+            # The final unpacked size is unknown without the expensive scan.
+            # Check space before each file and retain a reserve throughout.
+            if member.isfile() and shutil.disk_usage(destination).free < member.size + 128 * 1024**2:
+                raise BackendError('Not enough free disk space to extract Proton.')
+            extract_member(archive, member, destination, runner_root)
+            if member.isfile():
+                unpacked += member.size
+            now = time.monotonic()
+            if len(members) == 1 or now - last >= 0.15:
+                progress({'phase': 'extract', 'bytes': min(source.tell(), compressed_size - 1),
+                          'total': compressed_size, 'files': len(members), 'unpacked_bytes': unpacked,
+                          'elapsed': now - started, 'speed': int(unpacked / max(now - started, 0.001))})
+                last = now
         if not root:
             raise BackendError('Proton archive is empty.')
-        if shutil.disk_usage(destination).free < total + 128 * 1024**2:
-            raise BackendError('Not enough free disk space to extract Proton.')
-        runner_root = destination.resolve() / root
-        for index, member in enumerate(members):
-            extract_member(archive, member, destination, runner_root)
-            if index % 200 == 0 or index + 1 == len(members):
-                progress({'phase': 'extract', 'bytes': index + 1, 'total': len(members)})
         # A later symlink can change how an earlier link resolves. Reject
         # those escapes before publishing the private staging directory.
         for member in members:
@@ -264,6 +279,10 @@ def extract_archive(archive_path, destination, progress):
         raise BackendError('The extracted download is not a Steam Proton runner.')
     if not os.access(runner / 'proton', os.X_OK):
         raise BackendError('The downloaded Proton launcher is not executable.')
+    elapsed = time.monotonic() - started
+    progress({'phase': 'extract', 'bytes': compressed_size, 'total': compressed_size,
+              'files': len(members), 'unpacked_bytes': unpacked, 'elapsed': elapsed,
+              'speed': int(unpacked / max(elapsed, 0.001))})
     return runner
 
 
