@@ -98,6 +98,8 @@ WelcomeDialog::WelcomeDialog(const QJsonObject &bootstrap, QWidget *parent)
 
 QJsonObject WelcomeDialog::settingsData() const {
     auto settings = m_draft;
+    // Theme choices are already saved independently by the selector.
+    settings.remove("widget_style");
     settings.insert("steamgriddb_api_key", m_key->text().trimmed());
     return settings;
 }

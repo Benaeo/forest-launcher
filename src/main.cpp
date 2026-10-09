@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "appearance.h"
 #include "backendclient.h"
 #include "launchconfirmation.h"
 
@@ -24,6 +25,7 @@ int main(int argc, char **argv) {
     QCoreApplication::setApplicationVersion(FOREST_APPLICATION_VERSION);
     QCoreApplication::setOrganizationName("Forest");
     QApplication::setApplicationDisplayName("Forest Launcher");
+    Appearance::apply("default");
     app.setDesktopFileName("io.github.Benaeo.forest-launcher");
     app.setWindowIcon(QIcon::fromTheme("applications-games"));
     QCommandLineParser parser;

@@ -3,6 +3,7 @@
 #include "launchconfirmation.h"
 #include "gamedialog.h"
 #include "settingsdialog.h"
+#include "appearance.h"
 #include "welcomedialog.h"
 #include "startupnewsdialog.h"
 #include "removegamedialog.h"
@@ -283,8 +284,11 @@ void MainWindow::refresh(const QString &selectedId) {
     setBusy(true);
     const QJsonObject params = m_smokeTest ? QJsonObject{}
         : QJsonObject{{"launcher_version", QCoreApplication::applicationVersion()}};
-    m_backend->request("bootstrap", params, [this, selection](const QJsonObject &data) {
+    const auto styleRevision = Appearance::revision();
+    m_backend->request("bootstrap", params, [this, selection, styleRevision](const QJsonObject &data) {
         m_bootstrap = data;
+        if (styleRevision == Appearance::revision())
+            Appearance::apply(data.value("settings").toObject().value("widget_style").toString("default"));
         m_bootstrap.insert("frontend", QJsonObject{{"backend", m_shortcutContext.value("backend")}, {"data_root", m_dataRoot}});
         populateLibrary(selection);
         setBusy(false);

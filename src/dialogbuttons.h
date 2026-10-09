@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QBoxLayout>
+#include <QEvent>
 #include <QDialogButtonBox>
 #include <QPushButton>
 
@@ -16,6 +17,13 @@ public:
         expandButtons();
     }
 protected:
+    void changeEvent(QEvent *event) override {
+        QDialogButtonBox::changeEvent(event);
+        // Qt rebuilds its standard button layout when the native style changes.
+        // Reapply our fixed Close | Save order and equal-width layout afterward.
+        if (event->type() == QEvent::StyleChange || event->type() == QEvent::LayoutDirectionChange)
+            expandButtons();
+    }
     void showEvent(QShowEvent *event) override {
         QDialogButtonBox::showEvent(event);
         expandButtons();

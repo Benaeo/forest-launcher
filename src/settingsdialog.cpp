@@ -1,21 +1,82 @@
 #include "settingsdialog.h"
 #include "gameoptionswidget.h"
 #include "dialogbuttons.h"
+#include "appearance.h"
+#include "backendclient.h"
 
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QGroupBox>
+#include <QEvent>
+#include <QMessageBox>
+#include <QPointer>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <deque>
+#include <functional>
+
+namespace {
+struct ThemeChange {
+    QString backend;
+    QString dataRoot;
+    QString style;
+    std::function<void(const QString &)> finished;
+};
+std::deque<ThemeChange> themeChanges;
+
+void saveNextTheme() {
+    const auto change = themeChanges.front();
+    // App-owned requests survive Settings closing. Serialize them so rapid
+    // selections, including reopening Settings, cannot save out of order.
+    auto *client = new BackendClient(change.backend, change.dataRoot, qApp);
+    const auto finish = [client, change](const QString &error) {
+        client->deleteLater();
+        themeChanges.pop_front();
+        if (!themeChanges.empty()) saveNextTheme();
+        change.finished(error);
+    };
+    client->request("save_settings", {{"settings", QJsonObject{{"widget_style", change.style}}}},
+        [finish](const QJsonObject &data) {
+            // The backend atomically saves and fsyncs first. Even if switching
+            // the native style crashes, the chosen theme is already on disk.
+            ++Appearance::revision();
+            Appearance::apply(data.value("settings").toObject().value("widget_style").toString("default"));
+            finish({});
+        }, finish);
+}
+}
 
 SettingsDialog::SettingsDialog(const QJsonObject &bootstrap, QWidget *parent)
     : QDialog(parent), m_original(bootstrap.value("settings").toObject()) {
     setWindowTitle("Settings — General");
     setMinimumWidth(960);
     auto *layout = new QVBoxLayout(this);
+    auto *appearance = new QGroupBox("Appearance", this);
+    auto *appearanceLayout = new QVBoxLayout(appearance);
+    auto *styleRow = new QHBoxLayout;
+    auto *styleLabel = new QLabel("Theme", appearance);
+    styleRow->addWidget(styleLabel);
+    m_widgetStyle = new QComboBox(appearance);
+    m_widgetStyle->setObjectName("widgetStyle");
+    styleLabel->setBuddy(m_widgetStyle);
+    for (const auto &name : {QString("breeze"), QString("fusion"), QString("windows")}) {
+        if (!Appearance::installedStyle(name).isEmpty())
+            m_widgetStyle->addItem(Appearance::displayName(name), name);
+    }
+    // The active style includes changes saved independently since bootstrap.
+    const auto selected = Appearance::resolvedStyle(QApplication::style()->objectName()).toLower();
+    m_widgetStyle->setCurrentIndex(m_widgetStyle->findData(selected));
+    m_widgetStyle->setToolTip("Native Qt widget rendering. Colors and icons continue to follow your desktop.");
+    styleRow->addWidget(m_widgetStyle, 1);
+    appearanceLayout->addLayout(styleRow);
+    auto *styleNote = new QLabel("Theme changes apply and save immediately, independently of the other settings.", appearance);
+    styleNote->setWordWrap(true);
+    appearanceLayout->addWidget(styleNote);
+    layout->addWidget(appearance);
     m_defaults = new GameOptionsWidget(m_original.value("new_game_defaults").toObject(), bootstrap, this, true);
     m_closeAfter = new QCheckBox("Close Forest after launch", this);
     m_closeAfter->setObjectName("closeAfterLaunchCheck");
@@ -53,6 +114,34 @@ SettingsDialog::SettingsDialog(const QJsonObject &bootstrap, QWidget *parent)
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    const auto frontend = bootstrap.value("frontend").toObject();
+    connect(m_widgetStyle, &QComboBox::activated, this, [this, frontend](int index) {
+        if (index < 0 || m_styleSaving) return;
+        const auto style = m_widgetStyle->currentData().toString();
+        m_styleSaving = true;
+        m_widgetStyle->setEnabled(false);
+        const QPointer<SettingsDialog> dialog(this);
+        const bool idle = themeChanges.empty();
+        themeChanges.push_back({frontend.value("backend").toString(), frontend.value("data_root").toString(), style,
+            [dialog](const QString &error) {
+                if (dialog) {
+                    dialog->m_styleSaving = false;
+                    dialog->m_widgetStyle->setEnabled(true);
+                    dialog->m_widgetStyle->setCurrentIndex(dialog->m_widgetStyle->findData(
+                        Appearance::resolvedStyle(QApplication::style()->objectName()).toLower()));
+                }
+                if (!error.isEmpty())
+                    QMessageBox::warning(dialog.data(), "Theme could not be saved", error);
+            }});
+        if (idle) saveNextTheme();
+    });
+}
+
+void SettingsDialog::changeEvent(QEvent *event) {
+    QDialog::changeEvent(event);
+    if (event->type() == QEvent::StyleChange && m_widgetStyle && !m_styleSaving)
+        m_widgetStyle->setCurrentIndex(m_widgetStyle->findData(
+            Appearance::resolvedStyle(QApplication::style()->objectName()).toLower()));
 }
 
 QJsonObject SettingsDialog::settingsData() const {
@@ -62,6 +151,8 @@ QJsonObject SettingsDialog::settingsData() const {
     settings.insert("close_after_launch", m_closeAfter->isChecked());
     settings.insert("steamgriddb_api_key", m_apiKey->text().trimmed());
     settings.insert("default_icon_source", m_iconSource->currentData().toString());
+    // Never overwrite an independently saved theme with this settings draft.
+    settings.remove("widget_style");
     auto options = m_defaults->optionsData();
     options.insert("proton", "default");
     settings.insert("new_game_defaults", options);

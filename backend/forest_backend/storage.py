@@ -315,6 +315,7 @@ class Store:
             "close_after_launch": False,
             "steamgriddb_api_key": "",
             "default_icon_source": "extracted",
+            "widget_style": "default",
             "new_game_defaults": default_game_options(),
         }
         try:
@@ -347,6 +348,8 @@ class Store:
         defaults["steamgriddb_api_key"] = api_key(defaults["steamgriddb_api_key"])
         if defaults["default_icon_source"] not in ("extracted", "steamgriddb"):
             raise BackendError("Default icon source must be extracted or steamgriddb.")
+        if not isinstance(defaults["widget_style"], str) or defaults["widget_style"] not in ("default", "fusion", "windows", "breeze"):
+            raise BackendError("Widget style must be default, fusion, windows or breeze.")
         defaults["prefix_directory"] = expand_path(defaults["prefix_directory"])
         if defaults["default_proton"] in ("", "default", "auto"):
             defaults["default_proton"] = DEFAULT_PROTON
@@ -369,6 +372,10 @@ class Store:
             source = values["default_icon_source"]
             if not isinstance(source, str) or source not in ("extracted", "steamgriddb"):
                 raise BackendError("Default icon source must be extracted or steamgriddb.")
+        if "widget_style" in values:
+            style = values["widget_style"]
+            if not isinstance(style, str) or style not in ("default", "fusion", "windows", "breeze"):
+                raise BackendError("Widget style must be default, fusion, windows or breeze.")
         if "prefix_naming" in values and values["prefix_naming"] not in ("title", "default"):
             raise BackendError("Prefix naming must be title or default.")
         for key in ("prefix_directory", "default_proton"):
