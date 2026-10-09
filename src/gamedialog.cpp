@@ -420,6 +420,7 @@ bool GameDialog::chooseArtwork(bool startSearch, bool steamRequested) {
     m_bootstrap.insert("settings", dialog.settingsData());
     if (accepted) {
         m_artwork = dialog.artworkData();
+        m_steamGridDbId = dialog.gameId();
         updateIcon();
     }
     return accepted;

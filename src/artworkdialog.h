@@ -13,9 +13,9 @@
 #include <QMap>
 #include <QPushButton>
 
-// Image-only browser. Matching titles are combined internally; the user never
-// chooses a database game. Steam artwork clicks advance icon -> grid -> hero ->
-// logo, with Back/Next for review and an explicit Apply to confirm the draft.
+// Image-only browser. Each query uses the selected game or the first autocomplete
+// result, never combined related games. Steam artwork clicks advance through
+// icon -> grid -> hero -> logo, with Back/Next and explicit Apply confirmation.
 class ArtworkDialog : public QDialog {
 public:
     ArtworkDialog(QJsonObject bootstrap, QString title, QJsonObject artwork,
@@ -116,6 +116,7 @@ public:
         updateSelectionStatus();
     }
     QJsonObject artworkData() const { return m_artwork; }
+    int gameId() const { return m_resolvedGames.value(m_identityTitle, m_gameId); }
     QJsonObject settingsData() const { return m_bootstrap.value("settings").toObject(); }
     QString currentKind() const { return kinds().at(m_step); }
     bool isSequence() const { return m_sequence; }
@@ -198,6 +199,10 @@ private:
             }, [this](const QString &message) { m_keyPrompt = false; error(message); });
         return false;
     }
+    int queryGameId() const {
+        if (m_query == m_identityTitle && m_gameId > 0) return m_gameId;
+        return m_resolvedGames.value(m_query);
+    }
     void search(const QString &query, bool nextCategory = false) {
         if (m_selecting || m_keyPrompt) return;
         if (!nextCategory && query == m_query && !m_failed) return;
@@ -206,10 +211,11 @@ private:
         if (!ensureKey()) return;
         invalidate();
         m_query = query;
-        if (restoreCache()) return;
         const int epoch = m_epoch;
-        if (m_gameId > 0 && query == m_identityTitle) {
-            m_games.append({m_gameId, 0, true});
+        const int identity = queryGameId();
+        if (identity > 0) {
+            if (restoreCache()) return;
+            m_games.append({identity, 0, true});
             loadMore();
             return;
         }
@@ -217,13 +223,16 @@ private:
         status("Searching " + plural() + "…");
         m_backend->request("artwork_search", {{"query", query}}, [this, epoch](const QJsonObject &data) {
             if (epoch != m_epoch) return;
-            for (const auto &value : data.value("games").toArray()) {
-                const auto id = value.toObject().value("id").toInt();
-                if (id > 0 && m_games.size() < 100) m_games.append({id, 0, true});
-            }
+            const auto games = data.value("games").toArray();
+            const int identity = games.isEmpty() ? 0 : games.first().toObject().value("id").toInt();
             m_loading = false;
-            if (m_games.isEmpty()) finishLoading();
-            else loadMore();
+            if (identity <= 0) { finishLoading(); return; }
+            // Resolve once per query so Back/Next cannot switch games if the
+            // autocomplete ordering changes between category requests.
+            m_resolvedGames.insert(m_query, identity);
+            if (restoreCache()) return;
+            m_games.append({identity, 0, true});
+            loadMore();
         }, [this, epoch](const QString &message) { if (epoch == m_epoch) { m_loading = false; error(message); } });
     }
     void loadMore() {
@@ -376,7 +385,7 @@ private:
         const auto frontend = m_bootstrap.value("frontend").toObject();
         QJsonArray scope{frontend.value("backend"), frontend.value("data_root"),
             m_bootstrap.value("settings").toObject().value("steamgriddb_api_key"), m_query, currentKind(),
-            m_query == m_identityTitle ? m_gameId : 0};
+            queryGameId()};
         return QString::fromLatin1(QCryptographicHash::hash(QJsonDocument(scope).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256).toHex());
     }
     void finishLoading() {
@@ -437,6 +446,7 @@ private:
     QString m_query, m_waitingQuery;
     QString m_identityTitle;
     int m_gameId = 0;
+    QMap<QString, int> m_resolvedGames;
     QList<Row> m_rows;
     BackendClient *m_backend = nullptr;
     QList<Game> m_games;

@@ -6,7 +6,6 @@ from pathlib import Path
 import re
 import stat
 import tempfile
-import unicodedata
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler
@@ -22,7 +21,6 @@ MAX_JSON = 2 * 1024 * 1024
 KINDS = ("icon", "grid", "hero", "logo")
 ARTWORK_DIRECTORIES = {"icon": "icon", "grid": "grid", "hero": "banner", "logo": "logo", "extracted_icon": "extracted-icon"}
 API = "https://www.steamgriddb.com/api/v2"
-ROMAN = {str(n): r for n, r in enumerate(("I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"), 1)}
 
 
 def api_key(value):
@@ -196,37 +194,12 @@ def api_json(endpoint, key):
         raise BackendError("SteamGridDB returned an invalid response.") from None
 
 
-def normalized(title):
-    tokens = re.findall(r"[\w]+", unicodedata.normalize("NFKC", title).casefold())
-    inverse = {v.casefold(): k for k, v in ROMAN.items()}
-    if tokens and tokens[-1] in inverse: tokens[-1] = inverse[tokens[-1]]
-    return " ".join(tokens)
-
-
-def search_variants(query, expanded=False):
-    # Always combine the entered title with its standalone sequel-number spelling.
-    # No fuzzy ranking, typo recovery, broad token searches or experimental toggle.
-    inverse = {value.casefold(): key for key, value in ROMAN.items()}
-    words = query.split()
-    alternate = list(words)
-    for index, word in enumerate(words):
-        replacement = ROMAN.get(word) or inverse.get(word.casefold())
-        if replacement:
-            alternate[index] = replacement
-    return list(dict.fromkeys([query, " ".join(alternate)]))
-
-
 def search_games(key, query, expanded=False):
     if not isinstance(query, str) or not 1 <= len(query.strip()) <= 256 or "\0" in query or type(expanded) is not bool:
         raise BackendError("Enter a game title of up to 256 characters.")
-    query = query.strip()
-    found = {}
-    for variant in search_variants(query, expanded):
-        for game in api_json("/search/autocomplete/" + quote(variant, safe=""), key)[:100]:
-            if (isinstance(game, dict) and type(game.get("id")) is int and game["id"] > 0
-                    and isinstance(game.get("name"), str) and len(game["name"]) <= 512):
-                found[game["id"]] = {"id": game["id"], "name": game["name"]}
-    return {"games": list(found.values())[:100]}
+    # Match a typed title to one game, using SteamGridDB's autocomplete order.
+    # Keep the legacy expanded argument valid, but never merge related titles.
+    return {"games": title_suggestions(key, query)["games"][:1]}
 
 
 def title_suggestions(key, query):
