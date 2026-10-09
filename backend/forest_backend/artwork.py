@@ -246,13 +246,22 @@ def images(key, identity, kind, page=0):
     if type(identity) is not int or identity <= 0 or kind not in KINDS or type(page) is not int or not 0 <= page <= 1000:
         raise BackendError("Invalid artwork selection.")
     category = {"icon": "icons", "grid": "grids", "hero": "heroes", "logo": "logos"}[kind]
-    query = urlencode({"types": "static", "nsfw": "false", "epilepsy": "false", "limit": 30, "page": page})
+    filters = {"types": "static", "nsfw": "false", "epilepsy": "false", "limit": 30, "page": page}
+    if kind == "grid":
+        filters["dimensions"] = "600x900,342x482,660x930"
+    query = urlencode(filters)
+    values = api_json(f"/{category}/game/{identity}?{query}", key)[:30]
     result = []
-    for value in api_json(f"/{category}/game/{identity}?{query}", key)[:30]:
+    for value in values:
         if isinstance(value, dict) and all(type(value.get(field)) is str for field in ("url", "thumb")):
+            if kind == "grid":
+                width, height = value.get("width"), value.get("height")
+                if type(width) is not int or type(height) is not int or not 0 < width < height:
+                    continue
             if allowed_url(value["url"]) and allowed_url(value["thumb"]):
                 result.append({"url": value["url"], "thumb": value["thumb"], "author": str(value.get("author", {}).get("name", ""))[:128] if isinstance(value.get("author"), dict) else ""})
-    return {"images": result}
+    # Pagination follows the upstream page, not the number surviving validation.
+    return {"images": result, "has_more": len(values) == 30 and page < 1000}
 
 
 def allowed_url(url):

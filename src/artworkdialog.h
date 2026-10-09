@@ -55,7 +55,7 @@ public:
         m_list->setViewMode(QListView::IconMode);
         m_list->setResizeMode(QListView::Adjust);
         m_list->setMovement(QListView::Static);
-        m_list->setIconSize(QSize(150, 150));
+        m_list->setIconSize(thumbnailSize());
         m_list->setSpacing(6);
         m_list->setUniformItemSizes(true);
         m_layout->addWidget(m_list, 1);
@@ -132,7 +132,14 @@ protected:
     }
 private:
     static QStringList kinds() { return {"icon", "grid", "hero", "logo"}; }
+    QSize thumbnailSize() const {
+        if (currentKind() == "grid") return {150, 225};
+        if (currentKind() == "hero") return {480, 155};
+        if (currentKind() == "logo") return {300, 100};
+        return {150, 150};
+    }
     void updateTitle() {
+        m_list->setIconSize(thumbnailSize());
         setWindowTitle(currentKind() == "icon" ? "Choose an icon" : currentKind() == "grid" ? "Choose a grid"
             : currentKind() == "hero" ? "Choose a hero / banner" : "Choose a logo");
         if (m_sequence) {
@@ -238,8 +245,9 @@ private:
                 [this, epoch, index](const QJsonObject &data) {
                     if (epoch != m_epoch) return;
                     const auto images = data.value("images").toArray();
-                    m_games[index].more = images.size() == 30 && m_games[index].page < 1000;
+                    m_games[index].more = data.value("has_more").toBool(images.size() == 30) && m_games[index].page < 1000;
                     ++m_games[index].page;
+                    const int previousCount = m_list->count();
                     for (const auto &value : images) {
                         const auto image = value.toObject();
                         const auto url = image.value("url").toString();
@@ -250,9 +258,12 @@ private:
                         item->setData(Qt::UserRole, url);
                         item->setData(Qt::UserRole + 1, image.value("thumb"));
                         item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
-                        item->setSizeHint(QSize(164, 164));
+                        item->setSizeHint(thumbnailSize() + QSize(14, 14));
                         m_thumbnails.enqueue(m_list->count() - 1);
                     }
+                    // A filtered/duplicate-only page must not hide later results.
+                    if (m_list->count() == previousCount && m_games[index].more && m_list->count() < 2000)
+                        m_candidates.enqueue(index);
                     --m_imagesActive;
                     pumpImages(epoch);
                     pumpThumbnails(epoch);
@@ -278,7 +289,7 @@ private:
                     if (epoch != m_epoch) return;
                     const auto image = readArtworkImage(data.value("path").toString());
                     if (auto *item = m_list->item(row); item && !image.isNull()) {
-                        item->setIcon(QPixmap::fromImage(image.scaled(QSize(150, 150), Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+                        item->setIcon(QPixmap::fromImage(image.scaled(thumbnailSize(), Qt::KeepAspectRatio, Qt::SmoothTransformation)));
                         item->setFlags(item->flags() | Qt::ItemIsEnabled);
                         m_rows[row].path = data.value("path").toString();
                         status({});
@@ -394,12 +405,12 @@ private:
             for (int row = 0; row < m_rows.size(); ++row) {
                 const auto &cached = m_rows[row];
                 auto *item = new QListWidgetItem(m_list);
-                item->setSizeHint(QSize(164, 164));
+                item->setSizeHint(thumbnailSize() + QSize(14, 14));
                 item->setData(Qt::UserRole, cached.url);
                 item->setData(Qt::UserRole + 1, cached.thumb);
                 m_seen.insert(cached.url);
                 const auto image = readArtworkImage(cached.path);
-                if (!image.isNull()) item->setIcon(QPixmap::fromImage(image.scaled(QSize(150, 150), Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+                if (!image.isNull()) item->setIcon(QPixmap::fromImage(image.scaled(thumbnailSize(), Qt::KeepAspectRatio, Qt::SmoothTransformation)));
                 else { item->setFlags(item->flags() & ~Qt::ItemIsEnabled); m_thumbnails.enqueue(row); }
             }
             m_loading = false;
