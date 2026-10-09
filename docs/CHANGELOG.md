@@ -5,6 +5,21 @@ GitHub releases and the packaged release-note viewer use this file as their sing
 
 ## Unreleased
 
+## 0.33.4
+
+### Added
+
+- Native Qt theme selection.
+- Review artwork selection and change your choices.
+
+### Fixed
+
+- Faster Proton extraction, removing the full-archive scan before extraction starts.
+- Display extraction throughput and unpacked size.
+- Correct artwork selection shapes, portrait grids, and grid centering.
+- Use the first autocomplete match when loading artwork.
+- Improve native package compatibility across supported Linux distributions.
+
 ## 0.31.1
 
 ### Added

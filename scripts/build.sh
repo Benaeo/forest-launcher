@@ -17,4 +17,4 @@ fi
 cmake -S "$root" -B "$build" "${generator[@]}" \
     -DCMAKE_BUILD_TYPE=Release
 
-cmake --build "$build" --parallel
+cmake --build "$build" --target forest-launcher --parallel
